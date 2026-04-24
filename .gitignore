@@ -1,0 +1,16 @@
+# 运行时/缓存
+cache.json
+__pycache__/
+*.pyc
+
+# 上传的工参文件（运行时产生，不入库）
+uploaded_files/
+
+# 工参数据目录（原始数据，不入库）
+工参/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
