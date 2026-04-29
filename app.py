@@ -52,6 +52,7 @@ MAPPING_RULES = [
             "经度": ["经度"],
             "纬度": ["纬度", "维度"],
             "频段": ["频带", "频段"],
+            "共享": ["是否共享"],
         },
     },
     {
@@ -73,6 +74,7 @@ MAPPING_RULES = [
             "经度": ["经度", "Longitude"],
             "纬度": ["纬度", "维度", "Latitude"],
             "频段": ["网络类型", "频段", "频带"],
+            "共享": ["独立载波还是共享载波"],
         },
     },
     {
@@ -288,6 +290,15 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                     if lng_val:   # 经度有值但不是数字 → 伪表头
                         continue
 
+                # 标准化共享字段
+                share_val = rec.get("共享", "")
+                if "是" in share_val:
+                    rec["共享"] = "共享"
+                elif "否" in share_val or "独立" in share_val:
+                    rec["共享"] = "非共享"
+                elif "共享" in share_val:
+                    rec["共享"] = "共享"
+
                 new_records.append(rec)
                 imported_count += 1
 
@@ -428,7 +439,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
 thead{background:#f8fafc;position:sticky;top:0;z-index:2}
 th{padding:10px 14px;text-align:left;font-weight:600;color:var(--text-sec);font-size:12px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;border-bottom:2px solid var(--border);resize:horizontal;overflow:hidden;min-width:60px}
-td{padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+td{padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;overflow:hidden;text-overflow:ellipsis}
 td:hover{background:#eef2ff}
 tr:hover td{background:#f8fafc}
 .carrier-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600}
@@ -445,6 +456,9 @@ tr:hover td{background:#f8fafc}
 .vendor-er{background:#fef3c7;color:#92400e}
 .vendor-zt{background:#d1fae5;color:#065f46}
 .vendor-other{background:#f1f5f9;color:#475569}
+.share-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600}
+.share-yes{background:#fef3c7;color:#92400e}
+.share-no{background:#f1f5f9;color:#94a3b8}
 .pagination{display:flex;justify-content:center;align-items:center;gap:6px;padding:16px;flex-wrap:wrap}
 .page-btn{padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:13px;transition:all .15s}
 .page-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
@@ -526,7 +540,7 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <tr>
             <th>制式</th><th>运营商</th><th>设备商</th><th>基站名</th><th>基站ID</th>
             <th>小区名</th><th>PCI</th><th>小区ID</th><th>下行频点</th><th>下倾角</th>
-            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>来源</th>
+            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>共享</th><th>来源</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -846,6 +860,7 @@ function renderTable(data, q) {
       <td>${esc(r['\u65b9\u4f4d\u89d2']||'')}</td>
       <td>${esc(r['\u7ecf\u5ea6']||'')}</td>
       <td>${esc(r['\u7eac\u5ea6']||'')}</td>
+      <td>${(() => { const s = r['\u5171\u4eab']||''; if(!s) return ''; const cls = s.includes('\u975e\u5171\u4eab') ? 'share-no' : 'share-yes'; return `<span class="share-tag ${cls}">${esc(s)}</span>`; })()}</td>
       <td style="font-size:11px;color:var(--text-sec)">${esc(trunc(r['_\u6587\u4ef6\u540d']||'',25))}</td>
     </tr>`;
   }
@@ -1008,7 +1023,7 @@ class Handler(BaseHTTPRequestHandler):
             with db_lock:
                 all_data, _ = search_records(q, 1, 999999)
             cols = ["技术制式", "运营商", "设备商", "基站名", "基站ID", "小区名", "PCI", "小区ID",
-                    "下行频点", "下倾角", "挂高", "方位角", "经度", "纬度", "频段"]
+                    "下行频点", "下倾角", "挂高", "方位角", "经度", "纬度", "共享", "频段"]
             lines = ["\uFEFF" + ",".join(cols)]
             for r in all_data:
                 lines.append(",".join('"' + str(r.get(c, "")).replace('"', '""') + '"' for c in cols))
