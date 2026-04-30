@@ -291,12 +291,12 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                         continue
 
                 # 标准化共享字段
+                # 注意：必须先判断"非共享"/"独立"/"否"，再判断"共享"/"是"
+                # 否则"非共享载波"会被"共享" in share_val 误匹配为共享
                 share_val = rec.get("共享", "")
-                if "是" in share_val:
-                    rec["共享"] = "共享"
-                elif "否" in share_val or "独立" in share_val:
+                if "非共享" in share_val or "否" in share_val or "独立" in share_val:
                     rec["共享"] = "非共享"
-                elif "共享" in share_val:
+                elif "共享" in share_val or "是" in share_val:
                     rec["共享"] = "共享"
 
                 new_records.append(rec)
