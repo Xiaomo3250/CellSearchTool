@@ -52,7 +52,7 @@ MAPPING_RULES = [
             "经度": ["经度"],
             "纬度": ["纬度", "维度"],
             "频段": ["频带", "频段"],
-            "共享": ["是否共享"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -74,7 +74,7 @@ MAPPING_RULES = [
             "经度": ["经度", "Longitude"],
             "纬度": ["纬度", "维度", "Latitude"],
             "频段": ["网络类型", "频段", "频带"],
-            "共享": ["独立载波还是共享载波"],
+            "共享": ["独立载波还是共享载波", "共享方"],
         },
     },
     {
@@ -291,10 +291,14 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                         continue
 
                 # 标准化共享字段
-                # 注意：必须先判断"非共享"/"独立"/"否"，再判断"共享"/"是"
-                # 否则"非共享载波"会被"共享" in share_val 误匹配为共享
+                # 情况1："共享方"字段，取值为 "未共享" / 运营商名(如"电信"/"联通"/"移动")
+                # 情况2："独立载波还是共享载波"/"是否共享"等字段
+                # 注意：先判断否定词再判断肯定词，避免"非共享"被"共享"误匹配
                 share_val = rec.get("共享", "")
-                if "非共享" in share_val or "否" in share_val or "独立" in share_val:
+                if share_val == "未共享" or "非共享" in share_val or "否" in share_val or "独立" in share_val:
+                    rec["共享"] = "非共享"
+                elif share_val in ("", "电信", "联通", "移动"):
+                    # "共享方"字段为运营商名 → 该载波自有，非共享
                     rec["共享"] = "非共享"
                 elif "共享" in share_val or "是" in share_val:
                     rec["共享"] = "共享"
