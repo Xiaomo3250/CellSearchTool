@@ -531,7 +531,10 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
   </div>
   <div class="table-wrapper">
     <div class="table-header">
-      <h3 id="tableTitle">&#x1F4CB; 工参数据 <span id="searchResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);margin-left:8px"></span></h3>
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <h3 id="tableTitle" style="white-space:nowrap">&#x1F4CB; 工参数据</h3>
+        <span id="searchResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);white-space:nowrap"></span>
+      </div>
     </div>
     <div class="table-scroll">
       <table id="dataTable">
