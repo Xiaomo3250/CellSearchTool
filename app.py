@@ -852,12 +852,19 @@ async function removeSheet(filename, sheet) {
 async function doSearch(page) {
   currentPage = typeof page === 'number' ? page : 1;
   const q = document.getElementById('searchInput').value.trim();
-  const d = await (await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${currentPage}&per_page=${PER_PAGE}`)).json();
-  lastTotalResults = d.total;
-  document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
-  document.getElementById('exportBtn').style.display = d.total > 0 ? 'inline-flex' : 'none';
-  renderTable(d.results, q);
-  renderPagination(d.total, d.page, d.pages);
+  try {
+    const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${currentPage}&per_page=${PER_PAGE}`);
+    if (!resp.ok) throw new Error(`服务器错误 (${resp.status})`);
+    const d = await resp.json();
+    lastTotalResults = d.total;
+    document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
+    document.getElementById('exportBtn').style.display = d.total > 0 ? 'inline-flex' : 'none';
+    renderTable(d.results, q);
+    renderPagination(d.total, d.page, d.pages);
+  } catch(e) {
+    console.error('搜索失败:', e);
+    showToast('搜索失败: ' + e.message, 'error');
+  }
 }
 
 function renderTable(data, q) {
