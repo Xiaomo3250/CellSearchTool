@@ -511,8 +511,8 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
 <div class="container">
   <div class="stats-bar" id="statsBar">
     <div class="stat-card"><div class="label">已导入小区</div><div class="value" id="totalCount">0</div></div>
+    <div class="stat-card"><div class="label">已导入基站</div><div class="value" id="stationCount">0</div></div>
     <div class="stat-card"><div class="label">文件数量</div><div class="value" id="fileCount">0</div></div>
-    <div class="stat-card"><div class="label">搜索结果</div><div class="value" id="searchResultCount">0</div></div>
   </div>
   <!-- 文件管理区：导入按钮 + 已载入文件卡片 -->
   <div class="toolbar-box">
@@ -531,7 +531,7 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
   </div>
   <div class="table-wrapper">
     <div class="table-header">
-      <h3 id="tableTitle">&#x1F4CB; 工参数据</h3>
+      <h3 id="tableTitle">&#x1F4CB; 工参数据 <span id="searchResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);margin-left:8px"></span></h3>
     </div>
     <div class="table-scroll">
       <table id="dataTable">
@@ -621,6 +621,7 @@ async function loadStats() {
   try {
     const d = await (await fetch('/api/stats')).json();
     document.getElementById('totalCount').textContent = d.total.toLocaleString();
+    document.getElementById('stationCount').textContent = (d.stations || 0).toLocaleString();
     document.getElementById('fileCount').textContent = d.files;
     renderFileCards(d.sources);
   } catch(e) {}
@@ -853,7 +854,7 @@ async function doSearch(page) {
   const q = document.getElementById('searchInput').value.trim();
   const d = await (await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${currentPage}&per_page=${PER_PAGE}`)).json();
   lastTotalResults = d.total;
-  document.getElementById('searchResultCount').textContent = d.total.toLocaleString();
+  document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
   document.getElementById('exportBtn').style.display = d.total > 0 ? 'inline-flex' : 'none';
   renderTable(d.results, q);
   renderPagination(d.total, d.page, d.pages);
@@ -1029,7 +1030,20 @@ class Handler(BaseHTTPRequestHandler):
                         "count": v.get("count", 0),
                         "sheets": v.get("sheets", []),
                     })
-                self._send_json(200, {"total": len(records), "files": len(file_sources), "sources": sources})
+                # 基站去重：按 (基站名, 运营商, 制式) 三元组合并，同名不同运营商算不同基站
+                station_set = set()
+                for r in records:
+                    name = r.get("基站名", "").strip()
+                    carrier = r.get("运营商", "")
+                    tech = r.get("技术制式", "")
+                    if name:
+                        station_set.add((name, carrier, tech))
+                self._send_json(200, {
+                    "total": len(records),
+                    "stations": len(station_set),
+                    "files": len(file_sources),
+                    "sources": sources
+                })
 
         elif p == "/api/import-status":
             with db_lock:
