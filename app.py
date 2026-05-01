@@ -581,8 +581,39 @@ let currentPage = 1, lastTotalResults = 0, PER_PAGE = 50;
 // 预览数据: [{filename, carrier, tech, sheets:[{name,rows,recommended}]}]
 let previewData = [];
 
-document.getElementById('searchInput').addEventListener('keydown', e => {
+const searchInput = document.getElementById('searchInput');
+
+searchInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') { currentPage = 1; doSearch(); }
+  // Escape：清空输入框并重新聚焦
+  if (e.key === 'Escape') {
+    searchInput.value = '';
+    searchInput.select();
+    e.preventDefault();
+  }
+});
+
+// 全局快捷键
+document.addEventListener('keydown', e => {
+  const tag = document.activeElement.tagName;
+  const inInput = (tag === 'INPUT' || tag === 'TEXTAREA');
+
+  // Ctrl+A：无论焦点在哪，都聚焦到搜索框并全选内容
+  if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+    if (!inInput || document.activeElement !== searchInput) {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+      return;
+    }
+    // 如果已经在搜索框内，让浏览器正常执行全选
+  }
+
+  // 任意可打印字符（不带 Ctrl/Meta/Alt）：跳转到搜索框接收输入
+  if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+    searchInput.focus();
+    // 不 preventDefault，让这个字符正常输入到搜索框
+  }
 });
 
 // ======== 统计 & 文件卡片 ========
