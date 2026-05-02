@@ -290,13 +290,18 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                     if lng_val:   # 经度有值但不是数字 → 伪表头
                         continue
 
-                # 标准化共享字段（"共享方"字段）
-                # 取值： "未共享" → 非共享；运营商名(电信/联通/移动) → 非共享（自有载波）；含"共享"或"是" → 共享
-                share_val = rec.get("共享", "")
-                if share_val == "未共享" or share_val in ("", "电信", "联通", "移动"):
-                    rec["共享"] = "非共享"
-                elif "共享" in share_val or "是" in share_val:
-                    rec["共享"] = "共享"
+                # 标准化共享字段：仅对电信工参处理（联通是服务对象，不需要判断共享）
+                # 电信"共享方"字段取值：
+                #   "未共享" → 非共享；运营商名(电信) → 自有载波→非共享；含"共享"→共享
+                if rule.get("carrier") == "电信":
+                    share_val = rec.get("共享", "")
+                    if share_val == "未共享" or share_val in ("", "电信", "移动"):
+                        rec["共享"] = "非共享"
+                    elif "共享" in share_val or "是" in share_val:
+                        rec["共享"] = "共享"
+                else:
+                    # 联通工参：清空共享字段，不做判断
+                    rec["共享"] = ""
 
                 new_records.append(rec)
                 imported_count += 1
