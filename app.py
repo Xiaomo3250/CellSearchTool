@@ -98,6 +98,28 @@ MAPPING_RULES = [
             "频段": ["频段", "频带"],
         },
     },
+    {
+        "carrier": "联通", "tech": "5G",
+        "sheet_keywords": None,
+        "exclude_keywords": ["删除", "Sheet1", "行政区划"],
+        "field_map": {
+            "运营商": "中国联通", "技术制式": "5G NR",
+            "设备商": ["厂家"],
+            "基站名": ["基站名称"],
+            "基站ID": ["基站标识"],
+            "小区名": ["小区名称"],
+            "小区ID": ["NR小区标识", "小区标识"],
+            "PCI": ["PCI"],
+            "下行频点": ["SSB频点", "下行频点"],
+            "下倾角": ["电子下倾角", "机械下倾角"],
+            "挂高": ["挂高"],
+            "方位角": ["方位角"],
+            "经度": ["经度"],
+            "纬度": ["纬度"],
+            "频段": ["频带"],
+            "共享": ["是否共享"],
+        },
+    },
 ]
 
 
@@ -127,6 +149,39 @@ def get_matching_rule(filename):
         if rule["carrier"] == carrier and rule["tech"] == tech:
             return rule
     return None
+
+
+# ============ 基于命名的运营商检测 ============
+UNICOM_PREFIXES = {"CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN"}
+COUNTY_CODE_RE = re.compile(r'^[A-Z]{2,4}\d?$')
+END_SEGMENT_RE = re.compile(r'^\d{1,2}$|^.+[EC]$')
+
+def detect_carrier_from_names(cell_name, station_name):
+    """从小区名/基站名判定运营商。返回 (carrier, share_type) 或 (None, None)
+
+    规则优先级：
+    1. 含 (LTGX) → 联通共享站
+    2. 2段 + 联通区县前缀 → 联通自建
+    3. 5-6段 + CJ开头 + 区县码格式 + 末段合法 → 电信
+    """
+    names = [n for n in (cell_name, station_name) if n and n.strip()]
+    for name in names:
+        if "(LTGX)" in name:
+            return ("中国联通", "共享站")
+
+    for name in names:
+        parts = name.split("_")
+        n = len(parts)
+        first = parts[0] if n > 0 else ""
+        last = parts[-1] if n > 0 else ""
+
+        if n == 2 and any(first.startswith(p) for p in UNICOM_PREFIXES):
+            return ("中国联通", "自建")
+
+        if n in (5, 6, 7) and first == "CJ" and COUNTY_CODE_RE.match(parts[1]) and END_SEGMENT_RE.match(last):
+            return ("中国电信", "非共享")
+
+    return (None, None)
 
 
 def get_relevant_sheets(xls, rule):
@@ -290,29 +345,41 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                     if lng_val:   # 经度有值但不是数字 → 伪表头
                         continue
 
-                # 标准化共享字段：仅对电信工参处理（联通是服务对象，不需要判断共享）
-                # 电信"共享方"字段取值：
-                #   "未共享" → 非共享；运营商名(电信) → 自有载波→非共享；含"共享"→共享
-                if rule.get("carrier") == "电信":
-                    share_val = rec.get("共享", "")
-                    if share_val == "未共享" or share_val in ("", "电信", "移动"):
-                        rec["共享"] = "非共享"
-                    elif "共享" in share_val or "是" in share_val:
-                        rec["共享"] = "共享"
+                # 基于小区名/基站名判定运营商归属
+                carrier_detected, share_detected = detect_carrier_from_names(
+                    rec.get("小区名", ""), rec.get("基站名", "")
+                )
+                if carrier_detected:
+                    rec["运营商"] = carrier_detected
+                    rec["共享"] = share_detected
                 else:
-                    # 联通工参：清空共享字段，不做判断
-                    rec["共享"] = ""
+                    # 回退到文件名判定
+                    rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
+                    # 共享字段：仅电信工参做标准化处理
+                    if rule.get("carrier") == "电信":
+                        share_val = rec.get("共享", "")
+                        rec["共享"] = "非共享" if (share_val == "" or share_val == "未共享") else "共享"
+                    else:
+                        rec["共享"] = ""
 
                 new_records.append(rec)
                 imported_count += 1
 
             with db_lock:
                 records.extend(new_records)
+                # 统计该文件多数运营商
+                carrier_counts = {}
+                for r in new_records:
+                    c = r.get("运营商", "")
+                    carrier_counts[c] = carrier_counts.get(c, 0) + 1
+                majority_carrier = max(carrier_counts, key=carrier_counts.get) if carrier_counts else rule["carrier"]
                 if filename not in file_sources:
                     file_sources[filename] = {
-                        "carrier": rule["carrier"], "tech": rule["tech"],
+                        "carrier": majority_carrier, "tech": rule["tech"],
                         "count": 0, "sheets": []
                     }
+                else:
+                    file_sources[filename]["carrier"] = majority_carrier
                 file_sources[filename]["count"] += len(new_records)
                 if sn not in file_sources[filename]["sheets"]:
                     file_sources[filename]["sheets"].append(sn)

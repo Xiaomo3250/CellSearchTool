@@ -14,3 +14,14 @@ uploaded_files/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# 临时分析脚本
+analyze*.ps1
+analyze*.py
+
+# 缓存样本
+cache_sample.json
+
+# 开发/测试文件
+test_import.py
+.learnings/
