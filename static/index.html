@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>基站工参管理器</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="header">
+  <div class="container" style="display:flex;justify-content:space-between;align-items:center">
+    <div><h1>&#x1F4F6; 基站工参管理器</h1><p>快速导入、检索基站工参信息</p></div>
+    <div style="font-size:12px;opacity:.7">Station Parameter Manager</div>
+  </div>
+</div>
+<div class="container">
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-card"><div class="label">已导入小区</div><div class="value" id="totalCount">0</div></div>
+    <div class="stat-card"><div class="label">已导入基站</div><div class="value" id="stationCount">0</div></div>
+    <div class="stat-card"><div class="label">文件数量</div><div class="value" id="fileCount">0</div></div>
+  </div>
+  <!-- 文件管理区：导入按钮 + 已载入文件卡片 -->
+  <div class="toolbar-box">
+    <div class="toolbar-left">
+      <button class="btn btn-success" onclick="document.getElementById('fileInput').click()">&#x1F4C1; 导入工参</button>
+      <button class="btn btn-outline" onclick="clearAll()">&#x1F5D1; 清空数据</button>
+      <button class="btn btn-outline" onclick="openReportTool()" title="查询小区工参或附近基站">&#x1F4CA; 报告工具</button>
+    </div>
+    <div class="file-cards" id="fileCards"></div>
+  </div>
+  <div class="search-box">
+    <div class="search-row">
+      <input class="search-input" id="searchInput" type="text" placeholder="输入小区名、PCI、基站ID 或基站名进行搜索..." autofocus>
+      <button class="btn btn-primary" onclick="doSearch()">&#x1F50D; 搜索</button>
+      <button class="btn btn-outline btn-sm" onclick="exportCSV()" id="exportBtn" style="display:none">&#x1F4E5; 导出结果</button>
+    </div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <h3 id="tableTitle" style="white-space:nowrap">&#x1F4CB; 工参数据</h3>
+        <span id="searchResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);white-space:nowrap"></span>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th>制式</th><th>运营商</th><th>设备商</th><th>基站名</th><th>基站ID</th>
+            <th>小区名</th><th>PCI</th><th>小区ID</th><th>下行频点</th><th>下倾角</th>
+            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>共享</th><th>来源</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div id="pagination" class="pagination"></div>
+  </div>
+</div>
+<footer>基站工参管理器 &copy; 2026 | 数据仅在本地处理，缓存保存在本地磁盘</footer>
+
+<!-- 进度遮罩 -->
+<div class="overlay" id="progressOverlay" style="display:none">
+  <div class="progress-dialog">
+    <div class="spinner"></div>
+    <div class="title" id="progressTitle">正在处理...</div>
+    <div class="detail" id="progressDetail">请稍候</div>
+  </div>
+</div>
+
+<!-- 预览/勾选 弹窗 -->
+<div class="overlay" id="previewOverlay" style="display:none">
+  <div class="preview-dialog">
+    <div class="preview-dialog-head">
+      <h3>&#x1F4CB; 选择要导入的工作表</h3>
+      <button class="btn btn-outline btn-sm" onclick="closePreview()">✕ 取消</button>
+    </div>
+    <div class="preview-dialog-body" id="previewBody">加载中...</div>
+    <div class="preview-dialog-foot">
+      <button class="btn btn-outline" onclick="closePreview()">取消</button>
+      <button class="btn btn-success" onclick="confirmImport()">&#x2705; 确认导入</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" class="hidden-input" accept=".xlsx,.xls" multiple onchange="handleFiles(this.files)">
+
+<!-- 报告工具弹窗 -->
+<div class="overlay" id="reportOverlay" style="display:none">
+  <div class="report-dialog">
+    <div class="report-dialog-head">
+      <h3>&#x1F4CA; 报告工具</h3>
+      <button class="btn btn-outline btn-sm" onclick="closeReportTool()">✕ 关闭</button>
+    </div>
+    <!-- 标签切换 -->
+    <div class="report-tabs">
+      <button class="report-tab active" id="tabBtnQuery" onclick="switchReportTab('query')">&#x1F50D; 小区查询</button>
+      <button class="report-tab" id="tabBtnNearby" onclick="switchReportTab('nearby')">&#x1F4CD; 附近基站</button>
+    </div>
+    <!-- 小区查询面板 -->
+    <div class="report-panel" id="panelQuery">
+      <div class="report-search-row">
+        <input class="search-input" id="reportCellInput" type="text" placeholder="输入小区名（支持模糊匹配）..." onkeydown="if(event.key==='Enter')queryCell()">
+        <button class="btn btn-primary" onclick="queryCell()">查询</button>
+      </div>
+      <div class="report-results" id="reportCellResults">
+        <div class="empty-state"><div class="icon">&#x1F50D;</div><h3>输入小区名查询工参</h3><p>支持部分匹配，返回最相关的结果</p></div>
+      </div>
+    </div>
+    <!-- 附近基站面板 -->
+    <div class="report-panel" id="panelNearby" style="display:none">
+      <div class="report-search-row" style="flex-wrap:wrap">
+        <input class="search-input" id="reportLngInput" type="text" placeholder="经度 (如 88.0684)" style="flex:1;min-width:140px">
+        <input class="search-input" id="reportLatInput" type="text" placeholder="纬度 (如 44.0905)" style="flex:1;min-width:140px">
+        <input class="search-input" id="reportRadiusInput" type="text" placeholder="半径 km (默认5)" style="max-width:120px" value="5">
+        <button class="btn btn-primary" onclick="queryNearby()">查询</button>
+      </div>
+      <div class="report-results" id="reportNearbyResults">
+        <div class="empty-state"><div class="icon">&#x1F4CD;</div><h3>输入经纬度查找附近基站</h3><p>用于新建站选址参考，返回指定半径内的基站</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import re
 import json
 import threading
 import socket
+import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import pandas as pd
@@ -16,7 +17,10 @@ except ImportError:
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(WORKSPACE, "uploaded_files")
 CACHE_FILE = os.path.join(WORKSPACE, "cache.json")
+STATIC_DIR = os.path.join(WORKSPACE, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+__version__ = "0.2.1-alpha"
 
 # ============ 全局数据库 ============
 db_lock = threading.Lock()
@@ -45,14 +49,14 @@ MAPPING_RULES = [
             "小区名": ["NR小区名称"],
             "小区ID": ["小区ID", "小区本地ID"],
             "PCI": ["物理小区标识"],
-            "下行频点": ["下行频点", "SSB绝对信道号"],
+            "下行频点": ["SSB绝对信道号", "下行频点"],
             "下倾角": ["下倾角", "机械下倾角", "电子下倾角"],
             "挂高": ["挂高", "天线挂高", "站高"],
             "方位角": ["方位角"],
             "经度": ["经度"],
             "纬度": ["纬度", "维度"],
             "频段": ["频带", "频段"],
-            "共享": ["共享方"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -74,7 +78,7 @@ MAPPING_RULES = [
             "经度": ["经度", "Longitude"],
             "纬度": ["纬度", "维度", "Latitude"],
             "频段": ["网络类型", "频段", "频带"],
-            "共享": ["共享方"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -351,7 +355,12 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                 )
                 if carrier_detected:
                     rec["运营商"] = carrier_detected
-                    rec["共享"] = share_detected
+                    # 电信工参：以Excel"是否共享"列为准（命名检测只能区分电信/联通，无法判共享）
+                    if carrier_detected == "中国电信":
+                        share_val = rec.get("共享", "")
+                        rec["共享"] = "共享" if share_val in ("是", "共享", "Y", "Yes") else "非共享"
+                    else:
+                        rec["共享"] = share_detected  # 联通：命名检测结果更权威
                 else:
                     # 回退到文件名判定
                     rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
@@ -453,641 +462,47 @@ def search_records(query, page=1, per_page=50):
     return results[start:start + per_page], total
 
 
-# ============ HTML 前端 ============
-HTML_PAGE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>基站工参管理器</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--primary:#2563eb;--primary-dark:#1d4ed8;--bg:#f1f5f9;--card:#fff;--text:#1e293b;--text-sec:#64748b;--border:#e2e8f0;--success:#16a34a;--danger:#dc2626;--warn:#d97706;--radius:10px}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.header{background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;padding:20px 0;box-shadow:0 2px 10px rgba(0,0,0,.15)}
-.header h1{font-size:24px;font-weight:700;letter-spacing:1px}
-.header p{font-size:13px;opacity:.85;margin-top:4px}
-.container{max-width:1400px;margin:0 auto;padding:20px}
-.stats-bar{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
-.stat-card{background:var(--card);border-radius:var(--radius);padding:16px 24px;box-shadow:0 1px 3px rgba(0,0,0,.08);min-width:150px;flex:1}
-.stat-card .label{font-size:12px;color:var(--text-sec);text-transform:uppercase;letter-spacing:.5px}
-.stat-card .value{font-size:28px;font-weight:700;color:var(--primary);margin-top:4px}
-.search-box{background:var(--card);border-radius:var(--radius);padding:20px 24px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:20px}
-.search-row{display:flex;gap:12px;align-items:center}
-.search-input{flex:1;padding:12px 16px;border:2px solid var(--border);border-radius:8px;font-size:15px;outline:none;transition:border-color .2s}
-.search-input:focus{border-color:var(--primary)}
-.btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
-.btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
-.btn-success{background:var(--success);color:#fff}.btn-success:hover{opacity:.9}
-.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{opacity:.9}
-.btn-outline{background:transparent;border:2px solid var(--border);color:var(--text)}.btn-outline:hover{border-color:var(--primary);color:var(--primary)}
-.btn-sm{padding:6px 14px;font-size:12px}
-.btn-xs{padding:3px 10px;font-size:11px;border-radius:6px}
-.actions-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:flex-start}
-/* 工具栏（导入+文件卡片） */
-.toolbar-box{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:wrap}
-.toolbar-left{display:flex;gap:8px;flex-shrink:0}
-/* 文件管理卡片 */
-.file-cards{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
-.file-card{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:180px;max-width:300px;cursor:default}
-.file-card-header{display:flex;justify-content:space-between;align-items:center;gap:6px}
-.file-card-name{font-size:12px;font-weight:600;color:var(--text);word-break:break-all;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file-card-meta{font-size:11px;color:var(--text-sec);margin:4px 0;display:flex;align-items:center;gap:6px}
-.file-card-sheets{font-size:11px;color:var(--text-sec);cursor:pointer;margin-top:2px;display:flex;align-items:center;gap:4px;user-select:none}
-.file-card-sheets:hover{color:var(--primary)}
-.file-card-sheets .arrow{font-size:9px;transition:transform .2s;display:inline-block}
-.file-card-sheets.expanded .arrow{transform:rotate(90deg)}
-.sheet-list{display:none;flex-direction:column;gap:3px;margin-top:6px}
-.sheet-list.show{display:flex}
-.sheet-item{display:flex;justify-content:space-between;align-items:center;padding:3px 8px;background:#fff;border:1px solid var(--border);border-radius:5px;font-size:11px}
-.sheet-item .sheet-name{flex:1;color:var(--text)}
-.sheet-item .sheet-count{color:var(--text-sec);font-size:11px;margin-right:8px}
-/* 表格 */
-.table-wrapper{background:var(--card);border-radius:var(--radius);box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden}
-.table-header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid var(--border)}
-.table-header h3{font-size:16px;font-weight:600}
-.table-scroll{overflow-x:auto;max-height:65vh;overflow-y:auto}
-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
-thead{background:#f8fafc;position:sticky;top:0;z-index:2}
-th{padding:10px 14px;text-align:left;font-weight:600;color:var(--text-sec);font-size:12px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;border-bottom:2px solid var(--border);resize:horizontal;overflow:hidden;min-width:60px}
-td{padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;overflow:hidden;text-overflow:ellipsis}
-td:hover{background:#eef2ff}
-tr:hover td{background:#f8fafc}
-.carrier-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600}
-.carrier-dx{background:#dbeafe;color:#1e40af}
-.carrier-lt{background:#dcfce7;color:#166534}
-.carrier-yd{background:#fef9c3;color:#854d0e}
-.tech-tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;margin-left:6px}
-.tech-5g{background:#7c3aed;color:#fff}
-.tech-4g{background:#2563eb;color:#fff}
-.vendor-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600}
-.vendor-hw{background:#fce7f3;color:#9d174d}
-.vendor-dt{background:#f3e8ff;color:#6b21a8}
-.vendor-ns{background:#e0f2fe;color:#075985}
-.vendor-er{background:#fef3c7;color:#92400e}
-.vendor-zt{background:#d1fae5;color:#065f46}
-.vendor-other{background:#f1f5f9;color:#475569}
-.share-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600}
-.share-yes{background:#fef3c7;color:#92400e}
-.share-no{background:#f1f5f9;color:#94a3b8}
-.pagination{display:flex;justify-content:center;align-items:center;gap:6px;padding:16px;flex-wrap:wrap}
-.page-btn{padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:13px;transition:all .15s}
-.page-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
-.page-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
-.page-btn:disabled{opacity:.35;cursor:not-allowed}
-.page-info{font-size:12px;color:var(--text-sec);margin:0 8px}
-.empty-state{text-align:center;padding:60px 20px;color:var(--text-sec)}
-.empty-state .icon{font-size:48px;margin-bottom:16px;opacity:.3}
-.empty-state h3{font-size:18px;margin-bottom:8px;color:var(--text)}
-.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-size:14px;font-weight:500;z-index:9999;animation:slideIn .3s ease;box-shadow:0 4px 12px rgba(0,0,0,.15)}
-.toast-success{background:var(--success)}.toast-error{background:var(--danger)}.toast-info{background:var(--primary)}
-@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
-.hidden-input{display:none}
-/* 遮罩 */
-.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center}
-/* 进度弹窗 */
-.progress-dialog{background:var(--card);border-radius:var(--radius);padding:32px 40px;box-shadow:0 8px 32px rgba(0,0,0,.2);min-width:380px;text-align:center}
-.spinner{display:inline-block;width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px}
-@keyframes spin{to{transform:rotate(360deg)}}
-.progress-dialog .title{font-size:16px;font-weight:600;margin-bottom:8px}
-.progress-dialog .detail{font-size:13px;color:var(--text-sec);margin-top:8px;word-break:break-all}
-/* 预览弹窗 */
-.preview-dialog{background:var(--card);border-radius:var(--radius);padding:0;box-shadow:0 8px 32px rgba(0,0,0,.25);width:620px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column}
-.preview-dialog-head{padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
-.preview-dialog-head h3{font-size:16px;font-weight:700}
-.preview-dialog-body{padding:16px 24px;overflow-y:auto;flex:1}
-.preview-dialog-foot{padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
-.file-section{margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.file-section-head{padding:10px 16px;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600}
-.file-section-meta{font-size:11px;color:var(--text-sec);font-weight:400;margin-left:8px}
-.sheet-check-list{padding:8px 16px;display:flex;flex-direction:column;gap:6px}
-.sheet-check-item{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background .15s}
-.sheet-check-item:hover{background:#f1f5f9}
-.sheet-check-item input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--primary)}
-.sheet-check-item .sc-name{flex:1;font-size:13px}
-.sheet-check-item .sc-rows{font-size:11px;color:var(--text-sec);min-width:60px;text-align:right}
-.sc-recommended{font-size:10px;background:#dbeafe;color:#1e40af;padding:1px 7px;border-radius:10px;margin-left:6px}
-.select-all-row{display:flex;gap:8px;margin-bottom:6px;font-size:12px}
-.select-all-row a{color:var(--primary);cursor:pointer;text-decoration:underline}
-footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
-@media(max-width:768px){.container{padding:12px}.search-row{flex-direction:column}.actions-row{flex-direction:column}}
-</style>
-</head>
-<body>
-<div class="header">
-  <div class="container" style="display:flex;justify-content:space-between;align-items:center">
-    <div><h1>&#x1F4F6; 基站工参管理器</h1><p>快速导入、检索基站工参信息</p></div>
-    <div style="font-size:12px;opacity:.7">Station Parameter Manager</div>
-  </div>
-</div>
-<div class="container">
-  <div class="stats-bar" id="statsBar">
-    <div class="stat-card"><div class="label">已导入小区</div><div class="value" id="totalCount">0</div></div>
-    <div class="stat-card"><div class="label">已导入基站</div><div class="value" id="stationCount">0</div></div>
-    <div class="stat-card"><div class="label">文件数量</div><div class="value" id="fileCount">0</div></div>
-  </div>
-  <!-- 文件管理区：导入按钮 + 已载入文件卡片 -->
-  <div class="toolbar-box">
-    <div class="toolbar-left">
-      <button class="btn btn-success" onclick="document.getElementById('fileInput').click()">&#x1F4C1; 导入工参</button>
-      <button class="btn btn-outline" onclick="clearAll()">&#x1F5D1; 清空数据</button>
-    </div>
-    <div class="file-cards" id="fileCards"></div>
-  </div>
-  <div class="search-box">
-    <div class="search-row">
-      <input class="search-input" id="searchInput" type="text" placeholder="输入小区名、PCI、基站ID 或基站名进行搜索..." autofocus>
-      <button class="btn btn-primary" onclick="doSearch()">&#x1F50D; 搜索</button>
-      <button class="btn btn-outline btn-sm" onclick="exportCSV()" id="exportBtn" style="display:none">&#x1F4E5; 导出结果</button>
-    </div>
-  </div>
-  <div class="table-wrapper">
-    <div class="table-header">
-      <div style="display:flex;align-items:baseline;gap:8px">
-        <h3 id="tableTitle" style="white-space:nowrap">&#x1F4CB; 工参数据</h3>
-        <span id="searchResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);white-space:nowrap"></span>
-      </div>
-    </div>
-    <div class="table-scroll">
-      <table id="dataTable">
-        <thead>
-          <tr>
-            <th>制式</th><th>运营商</th><th>设备商</th><th>基站名</th><th>基站ID</th>
-            <th>小区名</th><th>PCI</th><th>小区ID</th><th>下行频点</th><th>下倾角</th>
-            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>共享</th><th>来源</th>
-          </tr>
-        </thead>
-        <tbody id="tableBody"></tbody>
-      </table>
-    </div>
-    <div id="pagination" class="pagination"></div>
-  </div>
-</div>
-<footer>基站工参管理器 &copy; 2026 | 数据仅在本地处理，缓存保存在本地磁盘</footer>
-
-<!-- 进度遮罩 -->
-<div class="overlay" id="progressOverlay" style="display:none">
-  <div class="progress-dialog">
-    <div class="spinner"></div>
-    <div class="title" id="progressTitle">正在处理...</div>
-    <div class="detail" id="progressDetail">请稍候</div>
-  </div>
-</div>
-
-<!-- 预览/勾选 弹窗 -->
-<div class="overlay" id="previewOverlay" style="display:none">
-  <div class="preview-dialog">
-    <div class="preview-dialog-head">
-      <h3>&#x1F4CB; 选择要导入的工作表</h3>
-      <button class="btn btn-outline btn-sm" onclick="closePreview()">✕ 取消</button>
-    </div>
-    <div class="preview-dialog-body" id="previewBody">加载中...</div>
-    <div class="preview-dialog-foot">
-      <button class="btn btn-outline" onclick="closePreview()">取消</button>
-      <button class="btn btn-success" onclick="confirmImport()">&#x2705; 确认导入</button>
-    </div>
-  </div>
-</div>
-
-<input type="file" id="fileInput" class="hidden-input" accept=".xlsx,.xls" multiple onchange="handleFiles(this.files)">
-
-<script>
-let currentPage = 1, lastTotalResults = 0, PER_PAGE = 50;
-// 预览数据: [{filename, carrier, tech, sheets:[{name,rows,recommended}]}]
-let previewData = [];
-
-const searchInput = document.getElementById('searchInput');
-
-searchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { currentPage = 1; doSearch(); }
-  // Escape：清空输入框并重新聚焦
-  if (e.key === 'Escape') {
-    searchInput.value = '';
-    searchInput.select();
-    e.preventDefault();
-  }
-});
-
-// 全局快捷键
-document.addEventListener('keydown', e => {
-  const tag = document.activeElement.tagName;
-  const inInput = (tag === 'INPUT' || tag === 'TEXTAREA');
-
-  // Ctrl+A：无论焦点在哪，都聚焦到搜索框并全选内容
-  if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-    if (!inInput || document.activeElement !== searchInput) {
-      e.preventDefault();
-      searchInput.focus();
-      searchInput.select();
-      return;
+# ============ 报告生成辅助函数 ============
+def _format_cell_record(rec):
+    """将内部记录格式化为报告 API 所需的字段（只提取核心字段，去掉内部标记）"""
+    return {
+        "技术制式": rec.get("技术制式", ""),
+        "运营商": rec.get("运营商", ""),
+        "设备商": rec.get("设备商", ""),
+        "基站名": rec.get("基站名", ""),
+        "基站ID": rec.get("基站ID", ""),
+        "小区名": rec.get("小区名", ""),
+        "小区ID": rec.get("小区ID", ""),
+        "PCI": rec.get("PCI", ""),
+        "下行频点": rec.get("下行频点", ""),
+        "频段": rec.get("频段", ""),
+        "下倾角": rec.get("下倾角", ""),
+        "挂高": rec.get("挂高", ""),
+        "方位角": rec.get("方位角", ""),
+        "经度": rec.get("经度", ""),
+        "纬度": rec.get("纬度", ""),
+        "共享": rec.get("共享", ""),
     }
-    // 如果已经在搜索框内，让浏览器正常执行全选
-  }
 
-  // 任意可打印字符（不带 Ctrl/Meta/Alt）：跳转到搜索框接收输入
-  if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-    searchInput.focus();
-    // 不 preventDefault，让这个字符正常输入到搜索框
-  }
-});
 
-// ======== 统计 & 文件卡片 ========
-async function loadStats() {
-  try {
-    const d = await (await fetch('/api/stats')).json();
-    document.getElementById('totalCount').textContent = d.total.toLocaleString();
-    document.getElementById('stationCount').textContent = (d.stations || 0).toLocaleString();
-    document.getElementById('fileCount').textContent = d.files;
-    renderFileCards(d.sources);
-  } catch(e) {}
-}
-
-function renderFileCards(sources) {
-  const fc = document.getElementById('fileCards');
-  if (!sources || !sources.length) { fc.innerHTML = ''; return; }
-  fc.innerHTML = sources.map(s => {
-    const sheets = s.sheets || [];
-    const sheetCount = sheets.length;
-    const cardId = 'card_' + s.filename.replace(/[^a-zA-Z0-9]/g,'_');
-    return `
-    <div class="file-card">
-      <div class="file-card-header">
-        <div class="file-card-name" title="${esc(s.filename)}">${esc(trunc(s.filename, 28))}</div>
-        <button class="btn btn-danger btn-xs" onclick="removeFile('${esc(s.filename)}')" title="关闭整个文件">✕</button>
-      </div>
-      <div class="file-card-meta">
-        <span class="carrier-tag carrier-${s.carrier === '中国电信' ? 'dx' : s.carrier === '中国联通' ? 'lt' : 'yd'}">${esc(s.carrier||'')}</span>
-        <span class="tech-tag tech-${(s.tech||'').includes('5G')?'5g':'4g'}">${esc(s.tech||'')}</span>
-        <span>${s.count.toLocaleString()} 条</span>
-      </div>
-      ${sheetCount > 0 ? `
-      <div class="file-card-sheets" id="${cardId}_toggle" onclick="toggleSheets('${cardId}')">
-        <span class="arrow">&#x25B6;</span>
-        <span>${sheetCount} 个工作表</span>
-      </div>
-      <div class="sheet-list" id="${cardId}_sheets">
-        ${sheets.map(sn => `
-          <div class="sheet-item">
-            <span class="sheet-name">${esc(sn)}</span>
-            <button class="btn btn-outline btn-xs" style="border-color:#fca5a5;color:#dc2626"
-              onclick="removeSheet('${esc(s.filename)}','${esc(sn)}')">移除</button>
-          </div>`).join('')}
-      </div>` : ''}
-    </div>`}).join('');
-}
-
-function toggleSheets(cardId) {
-  const toggle = document.getElementById(cardId + '_toggle');
-  const list = document.getElementById(cardId + '_sheets');
-  if (!toggle || !list) return;
-  const isOpen = list.classList.contains('show');
-  list.classList.toggle('show');
-  toggle.classList.toggle('expanded');
-}
-
-// ======== 上传 → 预览弹窗 ========
-async function handleFiles(files) {
-  if (!files.length) return;
-
-  showProgress('正在读取文件...', '解析 sheet 信息，请稍候');
-
-  const fd = new FormData();
-  for (let i = 0; i < files.length; i++) fd.append('files', files[i]);
-  document.getElementById('fileInput').value = '';
-
-  try {
-    const d = await (await fetch('/api/preview', { method: 'POST', body: fd })).json();
-    hideProgress();
-    if (d.error) { showToast(d.error, 'error'); return; }
-    previewData = d.files || [];
-    if (!previewData.length) { showToast('未识别到可导入的文件', 'error'); return; }
-    openPreview();
-  } catch(e) {
-    hideProgress();
-    showToast('读取文件失败: ' + e.message, 'error');
-  }
-}
-
-function openPreview() {
-  const body = document.getElementById('previewBody');
-  if (!previewData.length) return;
-
-  body.innerHTML = previewData.map((f, fi) => {
-    if (f.error) return `<div class="file-section">
-      <div class="file-section-head" style="color:var(--danger)">${esc(f.filename)} — ${esc(f.error)}</div>
-    </div>`;
-
-    const sheetItems = f.sheets.map((s, si) => `
-      <label class="sheet-check-item">
-        <input type="checkbox" id="chk_${fi}_${si}" data-fi="${fi}" data-si="${si}"
-          ${s.recommended ? 'checked' : ''}>
-        <span class="sc-name">${esc(s.name)}${s.recommended ? '<span class="sc-recommended">推荐</span>' : ''}</span>
-        <span class="sc-rows">${s.rows > 0 ? s.rows.toLocaleString() + ' 行' : ''}</span>
-      </label>`).join('');
-
-    return `<div class="file-section">
-      <div class="file-section-head">
-        ${esc(trunc(f.filename, 40))}
-        <span class="file-section-meta">${esc(f.carrier||'')} ${esc(f.tech||'')}</span>
-      </div>
-      <div class="sheet-check-list">
-        <div class="select-all-row">
-          <a onclick="selectAll(${fi},true)">全选</a>
-          <a onclick="selectAll(${fi},false)">全不选</a>
-          <a onclick="selectAll(${fi},'recommended')">仅推荐</a>
-        </div>
-        ${sheetItems}
-      </div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('previewOverlay').style.display = 'flex';
-}
-
-function selectAll(fi, mode) {
-  const checks = document.querySelectorAll(`input[data-fi="${fi}"]`);
-  checks.forEach(cb => {
-    const si = parseInt(cb.getAttribute('data-si'));
-    if (mode === 'recommended') cb.checked = previewData[fi].sheets[si].recommended;
-    else cb.checked = !!mode;
-  });
-}
-
-function closePreview() {
-  document.getElementById('previewOverlay').style.display = 'none';
-  previewData = [];
-}
-
-// ======== 确认导入 ========
-async function confirmImport() {
-  // 收集每个文件选中的 sheet
-  const selections = [];
-  previewData.forEach((f, fi) => {
-    if (f.error) return;
-    const selected = [];
-    f.sheets.forEach((s, si) => {
-      const cb = document.getElementById(`chk_${fi}_${si}`);
-      if (cb && cb.checked) selected.push(s.name);
-    });
-    if (selected.length) selections.push({ filename: f.filename, sheets: selected });
-  });
-
-  if (!selections.length) { showToast('请至少勾选一个工作表', 'error'); return; }
-
-  closePreview();
-  showProgress('正在导入工参数据...', '准备中');
-
-  // 初始化进度状态
-  const totalFiles = selections.length;
-  let fileIdx = 0;
-
-  const doImport = async () => {
-    for (const sel of selections) {
-      fileIdx++;
-      document.getElementById('progressDetail').textContent =
-        `(${fileIdx}/${totalFiles}) ${sel.filename} — 共 ${sel.sheets.length} 个工作表`;
-      try {
-        await fetch('/api/import-sheets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sel)
-        });
-      } catch(e) {}
-    }
-  };
-
-  // 启动后台导入，轮询进度
-  const r = await fetch('/api/import-sheets-async', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files: selections })
-  });
-  const d = await r.json();
-  if (d.pending) {
-    pollImportProgress();
-  } else {
-    hideProgress();
-    showToast('导入完成', 'success');
-    await loadStats(); currentPage = 1; doSearch();
-  }
-}
-
-// ======== 进度轮询 ========
-async function pollImportProgress() {
-  try {
-    const d = await (await fetch('/api/import-status')).json();
-    if (d.total_files > 0) {
-      const pct = Math.round(d.current_index / d.total_files * 100);
-      document.getElementById('progressTitle').textContent = `正在导入工参数据... (${pct}%)`;
-    }
-    let msg = `(${d.current_index}/${d.total_files}) ${d.current_file}`;
-    if (d.current_sheet) msg += ` → ${d.current_sheet}`;
-    msg += ` | 已导入 ${d.imported_records.toLocaleString()} 条`;
-    document.getElementById('progressDetail').textContent = msg;
-    document.getElementById('totalCount').textContent = d.imported_records.toLocaleString();
-
-    if (d.done || !d.running) {
-      hideProgress();
-      showToast(`导入完成，共 ${d.imported_records.toLocaleString()} 条记录`, 'success');
-      await loadStats(); currentPage = 1; doSearch();
-      return;
-    }
-    setTimeout(pollImportProgress, 500);
-  } catch(e) { setTimeout(pollImportProgress, 1000); }
-}
-
-// ======== 移除文件 / 移除 sheet ========
-async function removeFile(filename) {
-  if (!confirm(`确定要移除文件「${filename}」的所有数据吗？`)) return;
-  try {
-    const r = await fetch('/api/remove-sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename })
-    });
-    const d = await r.json();
-    if (d.ok) { showToast('已移除', 'info'); await loadStats(); currentPage = 1; doSearch(); }
-  } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
-}
-
-async function removeSheet(filename, sheet) {
-  if (!confirm(`确定要移除「${filename}」中的工作表「${sheet}」吗？`)) return;
-  try {
-    const r = await fetch('/api/remove-sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, sheets: [sheet] })
-    });
-    const d = await r.json();
-    if (d.ok) { showToast('已移除工作表', 'info'); await loadStats(); currentPage = 1; doSearch(); }
-  } catch(e) { showToast('操作失败: ' + e.message, 'error'); }
-}
-
-// ======== 搜索 & 渲染 ========
-async function doSearch(page) {
-  currentPage = typeof page === 'number' ? page : 1;
-  const q = document.getElementById('searchInput').value.trim();
-  try {
-    const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${currentPage}&per_page=${PER_PAGE}`);
-    if (!resp.ok) throw new Error(`服务器错误 (${resp.status})`);
-    const d = await resp.json();
-    lastTotalResults = d.total;
-    document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
-    document.getElementById('exportBtn').style.display = d.total > 0 ? 'inline-flex' : 'none';
-    renderTable(d.results, q);
-    renderPagination(d.total, d.page, d.pages);
-  } catch(e) {
-    console.error('搜索失败:', e);
-    showToast('搜索失败: ' + e.message, 'error');
-  }
-}
-
-function renderTable(data, q) {
-  const tb = document.getElementById('tableBody');
-  if (!data || !data.length) {
-    const empty = q ? '未找到匹配的工参记录，请尝试其他关键词' : '暂无数据，请导入工参文件';
-    tb.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">&#x1F50D;</div><h3>${empty}</h3><p style="margin-top:8px">支持按小区名、PCI、基站ID、基站名搜索</p></div></td></tr>`;
-    document.getElementById('tableTitle').innerHTML = '&#x1F4CB; 工参数据';
-    return;
-  }
-  let html = '';
-  for (const r of data) {
-    const tech = r['\u6280\u672f\u5236\u5f0f'] || '';
-    const tCls = tech.includes('5G') ? 'tech-5g' : 'tech-4g';
-    const techLabel = tech.includes('5G') ? '5G' : '4G';
-    const cc = r['\u8fd0\u8425\u5546'] || '';
-    const shortCarrier = cc.replace('\u4e2d\u56fd', '');
-    const cCls = cc.includes('\u7535\u4fe1') ? 'carrier-dx' : cc.includes('\u8054\u901a') ? 'carrier-lt' : 'carrier-yd';
-    html += `<tr>
-      <td><span class="tech-tag ${tCls}">${techLabel}</span></td>
-      <td><span class="carrier-tag ${cCls}">${shortCarrier}</span></td>
-      <td>${(() => { const v = r['\u8bbe\u5907\u5546']||''; let vc='vendor-other'; if(v.includes('\u534e\u4e3a'))vc='vendor-hw'; else if(v.includes('\u5927\u5510'))vc='vendor-dt'; else if(v.includes('\u8bfa\u57fa\u4e9a')||v.includes('Nokia'))vc='vendor-ns'; else if(v.includes('\u7231\u7acb\u4fe1')||v.includes('Ericsson'))vc='vendor-er'; else if(v.includes('\u4e2d\u5174'))vc='vendor-zt'; return `<span class="vendor-tag ${vc}">${esc(v)}</span>`; })()}</td>
-      <td title="${esc(r['\u57fa\u7ad9\u540d']||'')}">${esc(trunc(r['\u57fa\u7ad9\u540d'],30))}</td>
-      <td>${esc(r['\u57fa\u7ad9ID']||'')}</td>
-      <td title="${esc(r['\u5c0f\u533a\u540d']||'')}">${esc(trunc(r['\u5c0f\u533a\u540d'],35))}</td>
-      <td style="font-family:monospace">${esc(r['PCI']||'')}</td>
-      <td style="font-family:monospace">${esc(r['\u5c0f\u533aID']||'')}</td>
-      <td>${esc(r['\u4e0b\u884c\u9891\u70b9']||'')}</td>
-      <td>${esc(r['\u4e0b\u503e\u89d2']||'')}</td>
-      <td>${esc(r['\u6302\u9ad8']||'')}</td>
-      <td>${esc(r['\u65b9\u4f4d\u89d2']||'')}</td>
-      <td>${esc(r['\u7ecf\u5ea6']||'')}</td>
-      <td>${esc(r['\u7eac\u5ea6']||'')}</td>
-      <td>${(() => { const s = r['\u5171\u4eab']||''; if(!s) return ''; const cls = s.includes('\u975e\u5171\u4eab') ? 'share-no' : 'share-yes'; return `<span class="share-tag ${cls}">${esc(s)}</span>`; })()}</td>
-      <td style="font-size:11px;color:var(--text-sec)">${esc(trunc(r['_\u6587\u4ef6\u540d']||'',25))}</td>
-    </tr>`;
-  }
-  tb.innerHTML = html;
-  document.getElementById('tableTitle').innerHTML = '&#x1F4CB; 工参数据' + (q ? ` &mdash; 搜索: <b>${esc(q)}</b> (共 ${lastTotalResults.toLocaleString()} 条)` : '');
-}
-
-function renderPagination(total, page, pages) {
-  const pg = document.getElementById('pagination');
-  if (pages <= 1) { pg.innerHTML = ''; return; }
-  let html = '';
-  html += `<button class="page-btn" onclick="doSearch(1)"${page<=1?' disabled':''}>&laquo;</button>`;
-  html += `<button class="page-btn" onclick="doSearch(${page-1})"${page<=1?' disabled':''}>&lsaquo;</button>`;
-  const start = Math.max(1, page-2), end = Math.min(pages, page+2);
-  if (start > 1) html += '<span class="page-info">...</span>';
-  for (let i = start; i <= end; i++)
-    html += `<button class="page-btn${i===page?' active':''}" onclick="doSearch(${i})">${i}</button>`;
-  if (end < pages) html += '<span class="page-info">...</span>';
-  html += `<button class="page-btn" onclick="doSearch(${page+1})"${page>=pages?' disabled':''}>&rsaquo;</button>`;
-  html += `<button class="page-btn" onclick="doSearch(${pages})"${page>=pages?' disabled':''}>&raquo;</button>`;
-  html += `<span class="page-info">${page} / ${pages} 页</span>`;
-  pg.innerHTML = html;
-}
-
-// ======== 清空 ========
-async function clearAll() {
-  if (!confirm('确定要清空所有已导入的数据（同时删除本地缓存）？')) return;
-  try {
-    const d = await (await fetch('/api/clear', { method: 'POST' })).json();
-    if (d.ok) {
-      showToast('数据已清空', 'info');
-      currentPage = 1;
-      document.getElementById('searchInput').value = '';
-      await loadStats(); doSearch();
-    }
-  } catch(e) { showToast('清空失败: ' + e.message, 'error'); }
-}
-
-// ======== 导出 ========
-function exportCSV() {
-  const q = document.getElementById('searchInput').value.trim();
-  const a = document.createElement('a');
-  a.href = '/api/export?q=' + encodeURIComponent(q);
-  a.download = '工参查询结果_' + new Date().toISOString().slice(0,10) + '.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-}
-
-// ======== 工具 ========
-function showProgress(title, detail) {
-  document.getElementById('progressTitle').textContent = title;
-  document.getElementById('progressDetail').textContent = detail;
-  document.getElementById('progressOverlay').style.display = 'flex';
-}
-function hideProgress() { document.getElementById('progressOverlay').style.display = 'none'; }
-function trunc(s, n) { return s && s.length > n ? s.slice(0,n) + '...' : s || ''; }
-function esc(s) {
-  if (!s) return '';
-  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
-}
-function showToast(msg, type) {
-  const t = document.createElement('div');
-  t.className = 'toast toast-' + type; t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
-}
-
-// ======== 列宽拖拽调整 ========
-(function(){
-  const table = document.getElementById('dataTable');
-  if (!table) return;
-  const ths = table.querySelectorAll('thead th');
-  ths.forEach((th, i) => {
-    const grip = document.createElement('div');
-    grip.style.cssText = 'position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:3';
-    th.style.position = 'relative';
-    th.appendChild(grip);
-    let startX, startW;
-    grip.addEventListener('mousedown', e => {
-      e.preventDefault();
-      startX = e.clientX;
-      startW = th.offsetWidth;
-      const onMove = ev => {
-        const w = Math.max(60, startW + ev.clientX - startX);
-        th.style.width = w + 'px';
-        th.style.minWidth = w + 'px';
-        th.style.maxWidth = w + 'px';
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  });
-})();
-
-// ======== 单元格点击复制 ========
-document.getElementById('tableBody').addEventListener('click', function(e) {
-  const td = e.target.closest('td');
-  if (!td) return;
-  const text = td.innerText.trim();
-  if (!text) return;
-  navigator.clipboard.writeText(text).then(() => {
-    showToast('已复制: ' + text, 'info');
-  }).catch(() => {
-    showToast('复制失败', 'error');
-  });
-});
-
-loadStats(); doSearch();
-</script>
-</body>
-</html>"""
+# ============ 静态文件服务 ============
+def serve_static(path):
+    """读取静态文件内容，返回 (bytes, content_type) 或 (None, None)"""
+    safe = os.path.normpath(os.path.join(STATIC_DIR, path.lstrip("/")))
+    real = os.path.normpath(os.path.realpath(safe))
+    # 安全检查：确保路径在 STATIC_DIR 下
+    if not real.startswith(os.path.normpath(os.path.realpath(STATIC_DIR))):
+        return None, None
+    if not os.path.isfile(real):
+        return None, None
+    content_type, _ = mimetypes.guess_type(real)
+    if content_type is None:
+        content_type = "application/octet-stream"
+    # 常见文本类型统一用 utf-8
+    if content_type.startswith("text/") or content_type in ("application/javascript", "application/json"):
+        content_type += "; charset=utf-8"
+    with open(real, "rb") as f:
+        return f.read(), content_type
 
 
 # ============ HTTP 处理器 ============
@@ -1098,8 +513,30 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         p = url.path
 
+        # 首页：从文件读取 index.html
         if p in ("/", "/index.html"):
-            self._send_html(HTML_PAGE)
+            content, ct = serve_static("index.html")
+            if content:
+                self.send_response(200)
+                self.send_header("Content-Type", ct)
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"index.html not found")
+
+        # 静态资源：CSS / JS 等
+        elif p.startswith("/static/"):
+            content, ct = serve_static(p)
+            if content:
+                self.send_response(200)
+                self.send_header("Content-Type", ct)
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self.send_response(404)
+                self.end_headers()
 
         elif p == "/api/stats":
             with db_lock:
@@ -1160,6 +597,61 @@ class Handler(BaseHTTPRequestHandler):
                              "attachment; filename=export_" + __import__("time").strftime("%Y%m%d_%H%M%S") + ".csv")
             self.end_headers()
             self.wfile.write(csv_content.encode("utf-8"))
+
+        # ===== 报告生成模块 API =====
+        elif p == "/api/query-cell":
+            # 按小区名模糊查询，返回报告所需的完整工参信息
+            params = parse_qs(url.query)
+            q = params.get("q", [""])[0]
+            exact = params.get("exact", ["0"])[0] == "1"
+            max_results = min(int(params.get("limit", ["10"])[0]), 100)
+
+            with db_lock:
+                if not q.strip():
+                    self._send_json(200, {"results": [], "total": 0})
+                    return
+                results = []
+                q_lower = q.lower().replace("-", "")
+                for rec in records:
+                    cell_name = rec.get("小区名", "").lower().replace("-", "")
+                    station_name = rec.get("基站名", "").lower().replace("-", "")
+                    if exact:
+                        if q_lower == cell_name:
+                            results.append(_format_cell_record(rec))
+                    else:
+                        if q_lower in cell_name or q_lower in station_name:
+                            results.append(_format_cell_record(rec))
+                    if len(results) >= max_results:
+                        break
+            self._send_json(200, {"results": results, "total": len(results)})
+
+        elif p == "/api/cell-by-location":
+            # 按经纬度范围查找附近基站（用于新建站选址参考）
+            params = parse_qs(url.query)
+            try:
+                lng = float(params.get("lng", ["0"])[0])
+                lat = float(params.get("lat", ["0"])[0])
+                radius = float(params.get("radius", ["5"])[0])  # 默认5km
+            except (ValueError, TypeError):
+                self._send_json(400, {"error": "经纬度参数格式错误"})
+                return
+
+            with db_lock:
+                nearby = []
+                for rec in records:
+                    try:
+                        r_lng = float(rec.get("经度", 0))
+                        r_lat = float(rec.get("纬度", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    # 简化的距离计算（适用于小范围）
+                    dist = ((lng - r_lng) * 111.32 * 0.85) ** 2 + ((lat - r_lat) * 111.32) ** 2
+                    dist = dist ** 0.5
+                    if dist <= radius:
+                        nearby.append({**_format_cell_record(rec), "distance_km": round(dist, 2)})
+                # 按距离排序
+                nearby.sort(key=lambda x: x["distance_km"])
+                self._send_json(200, {"results": nearby[:50], "total": len(nearby)})
 
         else:
             self.send_response(404); self.end_headers()
@@ -1295,12 +787,6 @@ class Handler(BaseHTTPRequestHandler):
                 files.append({"filename": m.group(1), "data": data})
             except Exception: continue
         return files
-
-    def _send_html(self, content):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(content.encode("utf-8"))
 
     def _send_json(self, code, data):
         self.send_response(code)

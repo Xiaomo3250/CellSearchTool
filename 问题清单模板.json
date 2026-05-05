@@ -1,0 +1,72 @@
+{
+  "area": "阿乌高速",
+  "date": "2026年5月",
+  "lte_coverage": "74.04%",
+  "lte_avg_rsrp": "-95.82",
+  "lte_avg_sinr": "11.23",
+  "nr_coverage": "",
+  "nr_avg_ss_rsrp": "",
+  "nr_avg_ss_sinr": "",
+  "test_tools": [
+    {
+      "name": "测试手机 + Assistant平台",
+      "purpose": "路测数据采集与优化分析"
+    },
+    {
+      "name": "工参管理器",
+      "purpose": "基站工参查询"
+    }
+  ],
+  "problems": [
+    {
+      "type": "覆盖类",
+      "network": "4G",
+      "location": "五家渠入口38km处",
+      "cell_name": "CJ_WJQ0_102团8连D_GHCNN_PRT4E_0",
+      "rsrp": "-118.88",
+      "sinr": "",
+      "distance": "8.2km",
+      "root_cause": "服务小区弱覆盖",
+      "cause_detail": "",
+      "nearby_cell": "",
+      "nearby_cell_rsrp": "",
+      "solutions": [
+        "调整{cell}下倾角3°->0°。",
+        "增加{cell}功率。"
+      ]
+    },
+    {
+      "type": "切换类",
+      "network": "4G",
+      "location": "五家渠入口50km处",
+      "cell_name": "CJWJQ五家渠103团14连L_JYH1B",
+      "rsrp": "-108.50",
+      "sinr": "",
+      "distance": "1.8km",
+      "root_cause": "未切换至更优小区",
+      "cause_detail": "",
+      "nearby_cell": "CJ_WJQ0_五家渠103团13连D_GHCNN_PRT5C_10",
+      "nearby_cell_rsrp": "-95.00",
+      "solutions": [
+        "添加{cell}到{nearby_cell}双向邻区关系。"
+      ]
+    },
+    {
+      "type": "质差类",
+      "network": "4G",
+      "location": "北海西街食品厂小区附近",
+      "cell_name": "CJ_WJQ0_青湖名邸楼顶D_GHBXB_PRB2E_0",
+      "rsrp": "-98.12",
+      "sinr": "-3",
+      "distance": "360m",
+      "root_cause": "无主覆盖小区",
+      "cause_detail": "",
+      "nearby_cell": "CJWJQ五家渠北海公园_FYF1A",
+      "nearby_cell_rsrp": "-105.00",
+      "solutions": [
+        "调整{nearby_cell}方位角0°->30°。",
+        "调整{nearby_cell}下倾角6°->3°。"
+      ]
+    }
+  ]
+}
