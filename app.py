@@ -528,7 +528,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # 静态资源：CSS / JS 等
         elif p.startswith("/static/"):
-            content, ct = serve_static(p)
+            # 去掉 /static/ 前缀，只传相对路径给 serve_static
+            relative_path = p[len("/static/"):]
+            content, ct = serve_static(relative_path)
             if content:
                 self.send_response(200)
                 self.send_header("Content-Type", ct)
