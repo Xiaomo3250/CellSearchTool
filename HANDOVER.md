@@ -1,6 +1,6 @@
 # 工参管理器 项目交接文档
 
-> 当前版本：**v0.2.1-alpha** | 交接日期：2026-05-05  
+> 当前版本：**v0.3.0-alpha** | 交接日期：2026-05-05  
 > 开发环境：WorkBuddy → 迁移至 VSCode + GitHub Copilot  
 > 仓库：https://github.com/Xiaomo3250/CellSearchTool
 
@@ -327,7 +327,8 @@ set "PYTHON=C:\Users\12931\AppData\Local\Python\pythoncore-3.14-64\python.exe"
 当前版本: v0.2.1-alpha  (app.py 中 __version__ = "0.2.1-alpha")
 
 版本历史:
-  v0.2.1-alpha  → 补全 _format_cell_record、报告工具前端入口 (2026-05-05)
+  v0.3.0-alpha  → 报告生成器 WebUI 集成 — 页面内直接生成下载 docx (2026-05-05)
+  v0.2.1-alpha  → 补全 _format_cell_record、报告工具前端入口
   v0.2.0-alpha  → 前后端分离、启动脚本升级、共享字段修复、UI 优化
   v0.1.2-alpha  → 运营商归属智能检测重构
   v0.1.1        → 设备商标签、列宽拖拽、点击复制、共享字段

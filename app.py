@@ -21,7 +21,7 @@ CACHE_FILE = os.path.join(WORKSPACE, "cache.json")
 STATIC_DIR = os.path.join(WORKSPACE, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-__version__ = "0.2.1-alpha"
+__version__ = "0.3.0-alpha"
 
 # ============ 全局数据库 ============
 db_lock = threading.Lock()
