@@ -440,8 +440,14 @@ function switchReportTab(tab) {
   reportTab = tab;
   document.getElementById('tabBtnQuery').classList.toggle('active', tab === 'query');
   document.getElementById('tabBtnNearby').classList.toggle('active', tab === 'nearby');
+  document.getElementById('tabBtnGenerate').classList.toggle('active', tab === 'generate');
   document.getElementById('panelQuery').style.display = tab === 'query' ? 'block' : 'none';
   document.getElementById('panelNearby').style.display = tab === 'nearby' ? 'block' : 'none';
+  document.getElementById('panelGenerate').style.display = tab === 'generate' ? 'block' : 'none';
+  // 首次切换到生成标签时加载模板
+  if (tab === 'generate' && !document.getElementById('genProblems').value) {
+    loadReportTemplate();
+  }
 }
 
 // ---- 小区查询 ----
@@ -556,6 +562,100 @@ function jumpToCell(cellName) {
   doSearch();
   document.getElementById('searchInput').focus();
   document.getElementById('searchInput').select();
+}
+
+// ---- 加载报告模板 ----
+async function loadReportTemplate() {
+  try {
+    const resp = await fetch('/api/report-template');
+    const template = await resp.json();
+    document.getElementById('genArea').value = template.area || '';
+    document.getElementById('genDate').value = template.date || '';
+    document.getElementById('genLteCov').value = template.lte_coverage || '';
+    document.getElementById('genLteRsrp').value = template.lte_avg_rsrp || '';
+    document.getElementById('genLteSinr').value = template.lte_avg_sinr || '';
+    // 只把 problems 数组放到 JSON 编辑区（核心编辑内容）
+    document.getElementById('genProblems').value = JSON.stringify(template.problems, null, 2);
+    showToast('模板已加载', 'info');
+  } catch(e) {
+    showToast('加载模板失败: ' + e.message, 'error');
+  }
+}
+
+// ---- 生成并下载报告 ----
+async function generateReport() {
+  const area = document.getElementById('genArea').value.trim();
+  const date = document.getElementById('genDate').value.trim();
+  const lteCov = document.getElementById('genLteCov').value.trim();
+  const lteRsrp = document.getElementById('genLteRsrp').value.trim();
+  const lteSinr = document.getElementById('genLteSinr').value.trim();
+  const problemsText = document.getElementById('genProblems').value.trim();
+
+  if (!area) { showToast('请输入区域名称', 'error'); return; }
+  if (!problemsText) { showToast('请填写问题清单 JSON', 'error'); return; }
+
+  let problems;
+  try {
+    problems = JSON.parse(problemsText);
+    if (!Array.isArray(problems)) throw new Error('problems 必须是数组');
+  } catch(e) {
+    showToast('问题清单 JSON 格式错误: ' + e.message, 'error');
+    return;
+  }
+
+  const genBtn = document.getElementById('genBtn');
+  const statusEl = document.getElementById('genStatus');
+  genBtn.disabled = true;
+  genBtn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 生成中...';
+  statusEl.innerHTML = '';
+
+  const problemData = {
+    area, date,
+    lte_coverage: lteCov,
+    lte_avg_rsrp: lteRsrp,
+    lte_avg_sinr: lteSinr,
+    nr_coverage: "",
+    nr_avg_ss_rsrp: "",
+    nr_avg_ss_sinr: "",
+    test_tools: [
+      { "name": "测试手机 + Assistant平台", "purpose": "路测数据采集与优化分析" },
+      { "name": "工参管理器", "purpose": "基站工参查询" },
+    ],
+    problems: problems,
+  };
+
+  try {
+    const resp = await fetch('/api/generate-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ problem_data: problemData }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || `服务器错误 (${resp.status})`);
+    }
+
+    // 下载 docx
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = area + '_优化报告.docx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    statusEl.innerHTML = '<span style="color:var(--success);font-weight:600">✅ 报告生成成功，正在下载...</span>';
+    showToast('报告已生成', 'success');
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--danger)">❌ ' + esc(e.message) + '</span>';
+    showToast('生成失败: ' + e.message, 'error');
+  } finally {
+    genBtn.disabled = false;
+    genBtn.innerHTML = '&#x1F4E4; 生成并下载 docx';
+  }
 }
 
 // ======== 启动 ========

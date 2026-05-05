@@ -4,6 +4,7 @@ import json
 import threading
 import socket
 import mimetypes
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import pandas as pd
@@ -485,6 +486,54 @@ def _format_cell_record(rec):
     }
 
 
+# ============ 报告生成：直接数据访问客户端 ============
+class DirectCellClient:
+    """直接查询 records 列表（无需 HTTP），供 ReportGenerator 使用"""
+
+    def find_cell_by_name(self, cell_name: str) -> dict | None:
+        """根据小区名查找工参，支持部分匹配"""
+        if not cell_name:
+            return None
+        target = cell_name.lower().replace("-", "")
+        # 先精确匹配
+        with db_lock:
+            for rec in records:
+                if rec.get("小区名", "").lower().replace("-", "") == target:
+                    return _format_cell_record(rec)
+            # 截取末两段模糊匹配
+            parts = cell_name.split("_")
+            if len(parts) >= 2:
+                short = "_".join(parts[-2:]).lower()
+                for rec in records:
+                    if short in rec.get("小区名", "").lower():
+                        return _format_cell_record(rec)
+            # 最后兜底：任意包含
+            for rec in records:
+                if target in rec.get("小区名", "").lower().replace("-", ""):
+                    return _format_cell_record(rec)
+        return None
+
+    def get_nearby_cells(self, lng: float, lat: float, radius: float = 5.0) -> list[dict]:
+        """按经纬度查找附近基站"""
+        results = []
+        with db_lock:
+            for rec in records:
+                try:
+                    r_lng = float(rec.get("经度", 0))
+                    r_lat = float(rec.get("纬度", 0))
+                except (ValueError, TypeError):
+                    continue
+                dist = ((lng - r_lng) * 111.32 * 0.85) ** 2 + ((lat - r_lat) * 111.32) ** 2
+                dist = dist ** 0.5
+                if dist <= radius:
+                    results.append({
+                        **_format_cell_record(rec),
+                        "distance_km": round(dist, 2),
+                    })
+        results.sort(key=lambda x: x["distance_km"])
+        return results[:50]
+
+
 # ============ 静态文件服务 ============
 def serve_static(path):
     """读取静态文件内容，返回 (bytes, content_type) 或 (None, None)"""
@@ -655,6 +704,43 @@ class Handler(BaseHTTPRequestHandler):
                 nearby.sort(key=lambda x: x["distance_km"])
                 self._send_json(200, {"results": nearby[:50], "total": len(nearby)})
 
+        # ===== 报告模板 =====
+        elif p == "/api/report-template":
+            template = {
+                "area": "阿乌高速",
+                "date": "2026年5月",
+                "lte_coverage": "74.04%",
+                "lte_avg_rsrp": "-95.82",
+                "lte_avg_sinr": "11.23",
+                "nr_coverage": "",
+                "nr_avg_ss_rsrp": "",
+                "nr_avg_ss_sinr": "",
+                "test_tools": [
+                    {"name": "测试手机 + Assistant平台", "purpose": "路测数据采集与优化分析"},
+                    {"name": "工参管理器", "purpose": "基站工参查询"},
+                ],
+                "problems": [
+                    {
+                        "type": "覆盖类",
+                        "network": "4G",
+                        "location": "五家渠入口38km处",
+                        "cell_name": "CJ_WJQ0_102团8连D_GHCNN_PRT4E_0",
+                        "rsrp": "-118.88",
+                        "sinr": "",
+                        "distance": "8.2km",
+                        "root_cause": "服务小区弱覆盖",
+                        "cause_detail": "",
+                        "nearby_cell": "",
+                        "nearby_cell_rsrp": "",
+                        "solutions": [
+                            "调整{cell}下倾角3°->0°。",
+                            "增加{cell}功率。"
+                        ]
+                    }
+                ]
+            }
+            self._send_json(200, template)
+
         else:
             self.send_response(404); self.end_headers()
 
@@ -677,6 +763,8 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
             except Exception: pass
             self._send_json(200, {"ok": True})
+        elif p == "/api/generate-report":
+            self._handle_generate_report()
         else:
             self.send_response(404); self.end_headers()
 
@@ -764,6 +852,56 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "缺少 filename"}); return
         remove_sheets(filename, sheets)
         self._send_json(200, {"ok": True})
+
+    # ---- 报告生成 ----
+    def _handle_generate_report(self):
+        """接收问题清单 JSON，生成 docx 报告并返回下载"""
+        body = self._read_json_body()
+        if body is None:
+            return
+        problem_data = body.get("problem_data")
+        if not problem_data:
+            self._send_json(400, {"error": "缺少 problem_data"})
+            return
+
+        try:
+            # 导入报告生成器
+            from report_generator import ReportGenerator
+
+            client = DirectCellClient()
+            gen = ReportGenerator(client)
+            # 生成到临时文件
+            area = problem_data.get("area", "report")
+            tmp_path = os.path.join(
+                tempfile.gettempdir(),
+                f"工参报告_{area}_{int(__import__('time').time())}.docx"
+            )
+            gen.generate(problem_data, tmp_path)
+
+            # 读取文件并返回下载
+            with open(tmp_path, "rb") as f:
+                docx_data = f.read()
+            # 清理临时文件
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+            self.send_response(200)
+            safe_name = area.replace("/", "_").replace("\\", "_")
+            self.send_header("Content-Type",
+                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            self.send_header("Content-Disposition",
+                             f"attachment; filename={safe_name}_优化报告.docx")
+            self.send_header("Content-Length", str(len(docx_data)))
+            self.end_headers()
+            self.wfile.write(docx_data)
+        except ImportError as e:
+            self._send_json(500, {"error": f"报告生成模块缺失: {e}。请安装: pip install python-docx"})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {"error": f"报告生成失败: {e}"})
 
     # ---- 工具方法 ----
     def _read_json_body(self):

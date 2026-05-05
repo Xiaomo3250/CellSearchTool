@@ -96,6 +96,7 @@
     <div class="report-tabs">
       <button class="report-tab active" id="tabBtnQuery" onclick="switchReportTab('query')">&#x1F50D; 小区查询</button>
       <button class="report-tab" id="tabBtnNearby" onclick="switchReportTab('nearby')">&#x1F4CD; 附近基站</button>
+      <button class="report-tab" id="tabBtnGenerate" onclick="switchReportTab('generate')">&#x1F4DD; 生成报告</button>
     </div>
     <!-- 小区查询面板 -->
     <div class="report-panel" id="panelQuery">
@@ -105,6 +106,46 @@
       </div>
       <div class="report-results" id="reportCellResults">
         <div class="empty-state"><div class="icon">&#x1F50D;</div><h3>输入小区名查询工参</h3><p>支持部分匹配，返回最相关的结果</p></div>
+      </div>
+    </div>
+    <!-- 生成报告面板 -->
+    <div class="report-panel" id="panelGenerate" style="display:none">
+      <div class="report-form">
+        <div class="report-form-row">
+          <div class="report-form-group">
+            <label>区域名称</label>
+            <input class="search-input" id="genArea" type="text" placeholder="如：阿乌高速" value="阿乌高速">
+          </div>
+          <div class="report-form-group">
+            <label>报告日期</label>
+            <input class="search-input" id="genDate" type="text" placeholder="如：2026年5月" value="2026年5月">
+          </div>
+        </div>
+        <div class="report-form-row">
+          <div class="report-form-group">
+            <label>LTE 覆盖率</label>
+            <input class="search-input" id="genLteCov" type="text" placeholder="74.04%" value="74.04%">
+          </div>
+          <div class="report-form-group">
+            <label>LTE 平均 RSRP</label>
+            <input class="search-input" id="genLteRsrp" type="text" placeholder="-95.82" value="-95.82">
+          </div>
+          <div class="report-form-group">
+            <label>LTE 平均 SINR</label>
+            <input class="search-input" id="genLteSinr" type="text" placeholder="11.23" value="11.23">
+          </div>
+        </div>
+        <div class="report-form-row">
+          <div class="report-form-group" style="flex:1">
+            <label>问题清单 JSON（可直接编辑模板）</label>
+            <textarea class="report-json-editor" id="genProblems" rows="18" placeholder="在此编辑问题清单 JSON..."></textarea>
+          </div>
+        </div>
+        <div class="report-form-actions">
+          <button class="btn btn-outline" onclick="loadReportTemplate()">&#x1F4CB; 加载模板</button>
+          <button class="btn btn-success" onclick="generateReport()" id="genBtn">&#x1F4E4; 生成并下载 docx</button>
+        </div>
+        <div id="genStatus" style="margin-top:10px"></div>
       </div>
     </div>
     <!-- 附近基站面板 -->

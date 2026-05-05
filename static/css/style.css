@@ -468,6 +468,33 @@ tr:hover td { background: #f8fafc; }
 .report-result-body .kv .v { color: var(--text); font-weight: 500; }
 .report-result-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
 
+/* 报告生成表单 */
+.report-form { padding: 8px 0; }
+.report-form-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.report-form-group { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.report-form-group label { font-size: 12px; font-weight: 600; color: var(--text-sec); }
+.report-form-group .search-input { font-size: 13px; padding: 8px 12px; }
+.report-json-editor {
+  width: 100%;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  background: #f8fafc;
+}
+.report-json-editor:focus { border-color: var(--primary); }
+.report-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.report-form .spinner { width: 20px; height: 20px; border-width: 2px; margin: 0 8px 0 0; vertical-align: middle; }
+
 /* ---- 页脚 ---- */
 footer { text-align: center; padding: 20px; color: var(--text-sec); font-size: 12px; }
 
