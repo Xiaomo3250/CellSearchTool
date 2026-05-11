@@ -1322,18 +1322,18 @@ class Handler(BaseHTTPRequestHandler):
                     is_outdoor(r),
                 ] for r in filtered]
 
-            # 输出 CSV（加 BOM 防止 Excel 乱码）
-            lines = ["\uFEFF" + ",".join(headers)]
+            # 输出 CSV（GBK 编码，兼容 Pioneer；Excel 也可直接打开）
+            lines = [",".join(headers)]
             for row in rows:
                 lines.append(",".join('"' + v.replace('"', '""') + '"' for v in row))
             csv_content = "\n".join(lines)
 
             self.send_response(200)
-            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Type", "text/csv; charset=gbk")
             self.send_header("Content-Disposition",
                              f"attachment; filename=Pioneer_{fmt}_{ __import__('time').strftime('%Y%m%d_%H%M%S')}.csv")
             self.end_headers()
-            self.wfile.write(csv_content.encode("utf-8"))
+            self.wfile.write(csv_content.encode("gbk"))
 
         else:
             self.send_response(404); self.end_headers()
