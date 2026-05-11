@@ -543,6 +543,11 @@ tr:hover td{background:#f8fafc}
 .toast-success{background:var(--success)}.toast-error{background:var(--danger)}.toast-info{background:var(--primary)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 .hidden-input{display:none}
+/* 导出下拉菜单 */
+.export-dropdown{position:relative;display:inline-flex}
+.export-menu{position:absolute;top:100%;right:0;margin-top:4px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:100;min-width:200px;overflow:hidden}
+.export-menu-item{display:block;width:100%;padding:10px 16px;border:none;background:transparent;text-align:left;font-size:13px;cursor:pointer;white-space:nowrap;transition:background .15s}
+.export-menu-item:hover{background:#f1f5f9;color:var(--primary)}
 /* 遮罩 */
 .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center}
 /* 进度弹窗 */
@@ -598,7 +603,14 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
     <div class="search-row">
       <input class="search-input" id="searchInput" type="text" placeholder="输入小区名、PCI、基站ID 或基站名进行搜索..." autofocus>
       <button class="btn btn-primary" onclick="doSearch()">&#x1F50D; 搜索</button>
-      <button class="btn btn-outline btn-sm" onclick="exportCSV()" id="exportBtn" style="display:none">&#x1F4E5; 导出结果</button>
+      <div class="export-dropdown" id="exportDropdown" style="display:none">
+        <button class="btn btn-outline btn-sm" onclick="toggleExportMenu()">&#x1F4E5; 导出结果 ▾</button>
+        <div class="export-menu" id="exportMenu" style="display:none">
+          <button class="export-menu-item" onclick="exportCSV()">📄 表格 CSV（全字段）</button>
+          <button class="export-menu-item" onclick="exportPioneer('4G')">📡 Pioneer 4G 基站</button>
+          <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="table-wrapper">
@@ -933,7 +945,7 @@ async function doSearch(page) {
     const d = await resp.json();
     lastTotalResults = d.total;
     document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
-    document.getElementById('exportBtn').style.display = d.total > 0 ? 'inline-flex' : 'none';
+    document.getElementById('exportDropdown').style.display = d.total > 0 ? 'inline-flex' : 'none';
     renderTable(d.results, q);
     renderPagination(d.total, d.page, d.pages);
   } catch(e) {
@@ -1013,11 +1025,33 @@ async function clearAll() {
 }
 
 // ======== 导出 ========
+function toggleExportMenu() {
+  const menu = document.getElementById('exportMenu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+// 点击页面其他地方关闭菜单
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('exportDropdown');
+  if (dd && !dd.contains(e.target)) {
+    document.getElementById('exportMenu').style.display = 'none';
+  }
+});
+
 function exportCSV() {
+  document.getElementById('exportMenu').style.display = 'none';
   const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
   a.href = '/api/export?q=' + encodeURIComponent(q);
   a.download = '工参查询结果_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function exportPioneer(fmt) {
+  document.getElementById('exportMenu').style.display = 'none';
+  const q = document.getElementById('searchInput').value.trim();
+  const a = document.createElement('a');
+  a.href = '/api/export-pioneer?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
+  a.download = 'Pioneer_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
@@ -1158,6 +1192,66 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition",
                              "attachment; filename=export_" + __import__("time").strftime("%Y%m%d_%H%M%S") + ".csv")
+            self.end_headers()
+            self.wfile.write(csv_content.encode("utf-8"))
+
+        # ===== Pioneer 工参导出（CSV 格式，可直接导入 Pioneer）=====
+        elif p == "/api/export-pioneer":
+            params = parse_qs(url.query)
+            q = params.get("q", [""])[0]
+            fmt = params.get("fmt", ["4G"])[0]  # 4G 或 5G
+            with db_lock:
+                all_data, _ = search_records(q, 1, 999999)
+
+            # 按制式过滤
+            tech_keyword = "5G" if fmt == "5G" else "4G"
+            filtered = [r for r in all_data if tech_keyword in (r.get("技术制式", "") or "")]
+
+            # 室内外判断
+            def is_outdoor(rec):
+                name = (rec.get("基站名", "") + rec.get("小区名", "")).lower()
+                if any(k in name for k in ("室内", "室分", "indoor")):
+                    return "Indoor"
+                return "Outdoor"
+
+            if fmt == "5G":
+                headers = ["SITE NAME", "CELL NAME", "LONGITUDE", "LATITUDE",
+                           "PCI", "SSB ARFCN", "AZIMUTH", "Outdoor/Indoor"]
+                rows = [[
+                    str(r.get("基站名", "")),
+                    str(r.get("小区名", "")),
+                    str(r.get("经度", "")),
+                    str(r.get("纬度", "")),
+                    str(r.get("PCI", "")),
+                    str(r.get("下行频点", "")),
+                    str(r.get("方位角", "")),
+                    is_outdoor(r),
+                ] for r in filtered]
+            else:  # 4G
+                headers = ["SITE NAME", "CELL NAME", "eNB ID", "LONGITUDE", "LATITUDE",
+                           "PCI", "EARFCN", "AZIMUTH", "Outdoor/Indoor"]
+                rows = [[
+                    str(r.get("基站名", "")),
+                    str(r.get("小区名", "")),
+                    str(r.get("基站ID", "")),
+                    str(r.get("经度", "")),
+                    str(r.get("纬度", "")),
+                    str(r.get("PCI", "")),
+                    str(r.get("下行频点", "")),
+                    str(r.get("方位角", "")),
+                    is_outdoor(r),
+                ] for r in filtered]
+
+            # 输出 CSV
+            lines = [",".join(headers)]
+            for row in rows:
+                lines.append(",".join('"' + v.replace('"', '""') + '"' for v in row))
+            csv_content = "\n".join(lines)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f"attachment; filename=Pioneer_{fmt}_{ __import__('time').strftime('%Y%m%d_%H%M%S')}.csv")
             self.end_headers()
             self.wfile.write(csv_content.encode("utf-8"))
 
