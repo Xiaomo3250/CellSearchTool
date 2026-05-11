@@ -579,11 +579,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .btn-xs{padding:3px 10px;font-size:11px;border-radius:6px}
 .actions-row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:flex-start}
 /* 工具栏（导入+文件卡片） */
-.toolbar-box{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.toolbar-box{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px;flex-wrap:nowrap}
 .toolbar-left{display:flex;gap:8px;flex-shrink:0}
 /* 文件管理卡片 */
-.file-cards{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
-.file-card{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:180px;max-width:300px;cursor:default}
+.file-cards{display:flex;gap:8px;flex-wrap:nowrap;flex:1;min-width:0;overflow-x:auto;padding-bottom:4px}
+.file-card{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:180px;max-width:300px;cursor:default;flex-shrink:0}
 .file-card-header{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .file-card-name{font-size:12px;font-weight:600;color:var(--text);word-break:break-all;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-card-meta{font-size:11px;color:var(--text-sec);margin:4px 0;display:flex;align-items:center;gap:6px}
@@ -630,6 +630,7 @@ tr:hover td{background:#f8fafc}
 .page-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
 .page-btn:disabled{opacity:.35;cursor:not-allowed}
 .page-info{font-size:12px;color:var(--text-sec);margin:0 8px}
+.page-jump{width:48px;text-align:center;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-sec)}
 .empty-state .icon{font-size:48px;margin-bottom:16px;opacity:.3}
 .empty-state h3{font-size:18px;margin-bottom:8px;color:var(--text)}
@@ -777,23 +778,21 @@ searchInput.addEventListener('keydown', e => {
 // 全局快捷键
 document.addEventListener('keydown', e => {
   const tag = document.activeElement.tagName;
-  const inInput = (tag === 'INPUT' || tag === 'TEXTAREA');
+  const inInput = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 
-  // Ctrl+A：无论焦点在哪，都聚焦到搜索框并全选内容
+  // Ctrl+A：如果在输入框内，走浏览器默认全选；否则聚焦到搜索框
   if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-    if (!inInput || document.activeElement !== searchInput) {
+    if (!inInput) {
       e.preventDefault();
       searchInput.focus();
       searchInput.select();
-      return;
     }
-    // 如果已经在搜索框内，让浏览器正常执行全选
+    return;
   }
 
   // 任意可打印字符（不带 Ctrl/Meta/Alt）：跳转到搜索框接收输入
   if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
     searchInput.focus();
-    // 不 preventDefault，让这个字符正常输入到搜索框
   }
 });
 
@@ -1101,7 +1100,19 @@ function renderPagination(total, page, pages) {
   html += `<button class="page-btn" onclick="doSearch(${page+1})"${page>=pages?' disabled':''}>&rsaquo;</button>`;
   html += `<button class="page-btn" onclick="doSearch(${pages})"${page>=pages?' disabled':''}>&raquo;</button>`;
   html += `<span class="page-info">${page} / ${pages} 页</span>`;
+  html += `<span class="page-info">跳至 <input type="number" class="page-jump" id="pageJump" min="1" max="${pages}" placeholder="${page}" onkeydown="if(event.key==='Enter')jumpPage(${pages})"> 页</span>`;
   pg.innerHTML = html;
+}
+
+function jumpPage(totalPages) {
+  const inp = document.getElementById('pageJump');
+  const page = parseInt(inp.value, 10);
+  if (!isNaN(page) && page >= 1 && page <= totalPages) {
+    doSearch(page);
+  } else {
+    inp.value = '';
+    inp.placeholder = '1~' + totalPages;
+  }
 }
 
 // ======== 清空 ========
