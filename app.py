@@ -151,6 +151,86 @@ def get_matching_rule(filename):
     return None
 
 
+def resolve_rule_with_fallback(filepath, filename):
+    """获取匹配规则，文件名失败时用完整路径、首行数据、sheet名辅助检测"""
+    rule = get_matching_rule(filename)
+    if rule is not None:
+        return rule
+
+    tech_from_name = detect_tech(filename)
+
+    # 1) 文件名不包含运营商，但完整路径可能包含（如 ...\昌吉联通\...）
+    carrier_from_path = detect_carrier(filepath.replace("\\", "/"))
+    if carrier_from_path and tech_from_name:
+        for r in MAPPING_RULES:
+            if r["carrier"] == carrier_from_path and r["tech"] == tech_from_name:
+                return r
+
+    sheet_names = _read_sheet_names(filepath)
+
+    # 1) 优先读首行数据用命名检测（最可靠）
+    if sheet_names and sheet_names[0]:
+        try:
+            df_sample = pd.read_excel(filepath, sheet_name=sheet_names[0], nrows=5)
+            if len(df_sample) > 0:
+                first_row = df_sample.iloc[0].to_dict()
+                carrier, _ = detect_carrier_from_names(
+                    safe_str(first_row.get("NR小区名称") or first_row.get("小区名称") or first_row.get("CellName") or ""),
+                    safe_str(first_row.get("基站名称") or first_row.get("基站名") or first_row.get("EnodebName") or "")
+                )
+                if carrier:
+                    c = "电信" if "电信" in carrier else "联通" if "联通" in carrier else None
+                    t = tech_from_name or "4G"
+                    for r in MAPPING_RULES:
+                        if r["carrier"] == c and r["tech"] == t:
+                            return r
+        except Exception:
+            pass
+
+    # 2) 回退：遍历所有规则按 sheet_keywords 匹配 sheet 名
+    for r in MAPPING_RULES:
+        sk = r.get("sheet_keywords")
+        if sk is None:
+            continue
+        exclude = r.get("exclude_keywords", [])
+        for sn in sheet_names:
+            if any(kw in sn for kw in exclude):
+                continue
+            if any(kw in sn for kw in sk):
+                if tech_from_name and r["tech"] == tech_from_name:
+                    return r
+                elif rule is None:
+                    rule = r
+    if rule:
+        return rule
+
+    # 3) 最后兜底：如果有 sheet_keywords=None 的规则（如联通4G/5G），直接用
+    for r in MAPPING_RULES:
+        if r.get("sheet_keywords") is None and tech_from_name and r["tech"] == tech_from_name:
+            return r
+
+    return None
+
+
+def _read_sheet_names(filepath):
+    """快速读取 sheet 名列表"""
+    if HAS_OPENPYXL and filepath.lower().endswith((".xlsx", ".xlsm")):
+        try:
+            wb = load_workbook(filepath, read_only=True)
+            names = wb.sheetnames
+            wb.close()
+            return names
+        except Exception:
+            pass
+    try:
+        xls = pd.ExcelFile(filepath)
+        names = xls.sheet_names
+        xls.close()
+        return names
+    except Exception:
+        return []
+
+
 # ============ 基于命名的运营商检测 ============
 UNICOM_PREFIXES = {"CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN"}
 COUNTY_CODE_RE = re.compile(r'^[A-Z]{2,4}\d?$')
@@ -250,9 +330,9 @@ def load_cache():
 def preview_file(filepath):
     """返回文件的 sheet 预览信息，不导入数据"""
     filename = os.path.basename(filepath)
-    rule = get_matching_rule(filename)
+    rule = resolve_rule_with_fallback(filepath, filename)
     if rule is None:
-        return {"filename": filename, "error": "无法识别运营商/技术制式", "sheets": []}
+        return {"filename": filename, "error": "无法识别运营商/技术制式（文件名需含'电信'或'联通'）", "sheets": []}
     try:
         # 用 openpyxl read_only 模式：一次打开拿所有 sheet 名和 max_row，不解析内容（~1.5s vs 原来 30s+）
         if HAS_OPENPYXL and filepath.lower().endswith((".xlsx", ".xlsm")):
@@ -308,7 +388,7 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
     """只导入 sheet_names 中指定的 sheet"""
     global records, file_sources
     filename = os.path.basename(filepath)
-    rule = get_matching_rule(filename)
+    rule = resolve_rule_with_fallback(filepath, filename)
     if rule is None:
         return 0
 
