@@ -243,14 +243,14 @@ def detect_carrier_from_names(cell_name, station_name):
     只判定运营商归属，不判定共享状态（共享由 Excel 列决定）。
 
     规则优先级：
-    1. 含 (LTGX) → 联通共享站（电信站已共享给联通）
+    1. 含 (LTGX) → 电信共享给联通的站（运营商=电信，共享由Excel决定）
     2. 2段 + 联通区县前缀 → 联通自建
     3. 5-7段 + CJ开头 + 区县码格式 + 末段合法 → 电信（共享状态由Excel判定）
     """
     names = [n for n in (cell_name, station_name) if n and n.strip()]
     for name in names:
         if "(LTGX)" in name:
-            return ("中国联通", "共享站")
+            return ("中国电信", None)  # 电信建、已共享给联通，共享由Excel决定
 
     for name in names:
         parts = name.split("_")
