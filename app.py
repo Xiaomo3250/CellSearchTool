@@ -1322,8 +1322,8 @@ class Handler(BaseHTTPRequestHandler):
                     is_outdoor(r),
                 ] for r in filtered]
 
-            # 输出 CSV
-            lines = [",".join(headers)]
+            # 输出 CSV（加 BOM 防止 Excel 乱码）
+            lines = ["\uFEFF" + ",".join(headers)]
             for row in rows:
                 lines.append(",".join('"' + v.replace('"', '""') + '"' for v in row))
             csv_content = "\n".join(lines)
