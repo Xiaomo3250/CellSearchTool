@@ -52,7 +52,7 @@ MAPPING_RULES = [
             "经度": ["经度"],
             "纬度": ["纬度", "维度"],
             "频段": ["频带", "频段"],
-            "共享": ["共享方"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -74,7 +74,7 @@ MAPPING_RULES = [
             "经度": ["经度", "Longitude"],
             "纬度": ["纬度", "维度", "Latitude"],
             "频段": ["网络类型", "频段", "频带"],
-            "共享": ["共享方"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -96,6 +96,7 @@ MAPPING_RULES = [
             "经度": ["经度", "Longitude"],
             "纬度": ["维度", "纬度", "Latitude"],
             "频段": ["频段", "频带"],
+            "共享": ["是否共享", "共享方"],
         },
     },
     {
@@ -234,15 +235,17 @@ def _read_sheet_names(filepath):
 # ============ 基于命名的运营商检测 ============
 UNICOM_PREFIXES = {"CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN"}
 COUNTY_CODE_RE = re.compile(r'^[A-Z]{2,4}\d?$')
-END_SEGMENT_RE = re.compile(r'^\d{1,2}$|^.+[EC]$')
+END_SEGMENT_RE = re.compile(r'^\d{1,2}$|^.+[EC]$|^.+[EC]-\d+$')
 
 def detect_carrier_from_names(cell_name, station_name):
     """从小区名/基站名判定运营商。返回 (carrier, share_type) 或 (None, None)
 
+    只判定运营商归属，不判定共享状态（共享由 Excel 列决定）。
+
     规则优先级：
-    1. 含 (LTGX) → 联通共享站
+    1. 含 (LTGX) → 联通共享站（电信站已共享给联通）
     2. 2段 + 联通区县前缀 → 联通自建
-    3. 5-6段 + CJ开头 + 区县码格式 + 末段合法 → 电信
+    3. 5-7段 + CJ开头 + 区县码格式 + 末段合法 → 电信（共享状态由Excel判定）
     """
     names = [n for n in (cell_name, station_name) if n and n.strip()]
     for name in names:
@@ -258,8 +261,9 @@ def detect_carrier_from_names(cell_name, station_name):
         if n == 2 and any(first.startswith(p) for p in UNICOM_PREFIXES):
             return ("中国联通", "自建")
 
+        # 电信命名模式：CJ_区县码_... — 仅判运营商，共享由Excel决定
         if n in (5, 6, 7) and first == "CJ" and COUNTY_CODE_RE.match(parts[1]) and END_SEGMENT_RE.match(last):
-            return ("中国电信", "非共享")
+            return ("中国电信", None)  # None 表示由Excel列决定共享
 
     return (None, None)
 
@@ -431,16 +435,26 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                 )
                 if carrier_detected:
                     rec["运营商"] = carrier_detected
-                    rec["共享"] = share_detected
+                    if share_detected is not None:
+                        # 联通自建/联通共享站：命名检测结果直接使用
+                        rec["共享"] = share_detected
+                    else:
+                        # 电信站：共享由 Excel "是否共享" 列决定
+                        share_val = rec.get("共享", "")
+                        rec["共享"] = "共享" if share_val in ("是", "共享", "Y", "Yes") else "非共享"
                 else:
                     # 回退到文件名判定
                     rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
-                    # 共享字段：仅电信工参做标准化处理
-                    if rule.get("carrier") == "电信":
-                        share_val = rec.get("共享", "")
-                        rec["共享"] = "非共享" if (share_val == "" or share_val == "未共享") else "共享"
+                    # 共享字段：根据Excel "是否共享" 列标准化
+                    share_val = rec.get("共享", "")
+                    if share_val in ("是", "共享", "Y", "Yes"):
+                        rec["共享"] = "共享"
+                    elif share_val in ("否", "未共享", "N", "No"):
+                        rec["共享"] = "非共享"
+                    elif rule.get("carrier") == "电信" and share_val == "":
+                        rec["共享"] = "非共享"
                     else:
-                        rec["共享"] = ""
+                        rec["共享"] = share_val  # 保留原值（如 "自建"、"共享站"）
 
                 new_records.append(rec)
                 imported_count += 1
