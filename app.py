@@ -1131,7 +1131,7 @@ function exportPioneer(fmt) {
   const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
   a.href = '/api/export-pioneer?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
-  a.download = 'Pioneer_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.download = 'Pioneer_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.xls';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
@@ -1275,7 +1275,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(csv_content.encode("utf-8"))
 
-        # ===== Pioneer 工参导出（CSV 格式，可直接导入 Pioneer）=====
+        # ===== Pioneer 工参导出（.xls 格式，与 Pioneer 原生模板一致）=====
         elif p == "/api/export-pioneer":
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
@@ -1298,42 +1298,60 @@ class Handler(BaseHTTPRequestHandler):
                 headers = ["SITE NAME", "CELL NAME", "LONGITUDE", "LATITUDE",
                            "PCI", "SSB ARFCN", "AZIMUTH", "Outdoor/Indoor"]
                 rows = [[
-                    str(r.get("基站名", "")),
-                    str(r.get("小区名", "")),
-                    str(r.get("经度", "")),
-                    str(r.get("纬度", "")),
-                    str(r.get("PCI", "")),
-                    str(r.get("下行频点", "")),
-                    str(r.get("方位角", "")),
+                    r.get("基站名", ""),
+                    r.get("小区名", ""),
+                    r.get("经度", ""),
+                    r.get("纬度", ""),
+                    r.get("PCI", ""),
+                    r.get("下行频点", ""),
+                    r.get("方位角", ""),
                     is_outdoor(r),
                 ] for r in filtered]
             else:  # 4G
                 headers = ["SITE NAME", "CELL NAME", "eNB ID", "LONGITUDE", "LATITUDE",
                            "PCI", "EARFCN", "AZIMUTH", "Outdoor/Indoor"]
                 rows = [[
-                    str(r.get("基站名", "")),
-                    str(r.get("小区名", "")),
-                    str(r.get("基站ID", "")),
-                    str(r.get("经度", "")),
-                    str(r.get("纬度", "")),
-                    str(r.get("PCI", "")),
-                    str(r.get("下行频点", "")),
-                    str(r.get("方位角", "")),
+                    r.get("基站名", ""),
+                    r.get("小区名", ""),
+                    r.get("基站ID", ""),
+                    r.get("经度", ""),
+                    r.get("纬度", ""),
+                    r.get("PCI", ""),
+                    r.get("下行频点", ""),
+                    r.get("方位角", ""),
                     is_outdoor(r),
                 ] for r in filtered]
 
-            # 输出 CSV（GBK 编码，兼容 Pioneer；Excel 也可直接打开）
-            lines = [",".join(headers)]
-            for row in rows:
-                lines.append(",".join('"' + v.replace('"', '""') + '"' for v in row))
-            csv_content = "\n".join(lines)
+            # 生成 .xls（xlwt，无编码问题，Pioneer 原生支持）
+            import xlwt
+            wb = xlwt.Workbook(encoding="utf-8")
+            ws = wb.add_sheet(f"{fmt} Site Info", cell_overwrite_ok=True)
+
+            # 写表头
+            header_style = xlwt.XFStyle()
+            header_font = xlwt.Font()
+            header_font.bold = True
+            header_style.font = header_font
+            for ci, h in enumerate(headers):
+                ws.write(0, ci, h, header_style)
+
+            # 写数据行
+            for ri, row in enumerate(rows):
+                for ci, val in enumerate(row):
+                    ws.write(ri + 1, ci, val)
+
+            import io
+            buf = io.BytesIO()
+            wb.save(buf)
+            xls_data = buf.getvalue()
 
             self.send_response(200)
-            self.send_header("Content-Type", "text/csv; charset=gbk")
+            self.send_header("Content-Type", "application/vnd.ms-excel")
             self.send_header("Content-Disposition",
-                             f"attachment; filename=Pioneer_{fmt}_{ __import__('time').strftime('%Y%m%d_%H%M%S')}.csv")
+                             f"attachment; filename=Pioneer_{fmt}_{ __import__('time').strftime('%Y%m%d_%H%M%S')}.xls")
+            self.send_header("Content-Length", str(len(xls_data)))
             self.end_headers()
-            self.wfile.write(csv_content.encode("gbk"))
+            self.wfile.write(xls_data)
 
         else:
             self.send_response(404); self.end_headers()
