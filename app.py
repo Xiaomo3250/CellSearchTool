@@ -706,7 +706,6 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
           <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
           <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
-          <button class="export-menu-item" onclick="exportMapInfo()">🗺 MapInfo TAB</button>
         </div>
       </div>
     </div>
@@ -1163,15 +1162,6 @@ function exportPioneer(fmt) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
-function exportMapInfo() {
-  document.getElementById('exportMenu').style.display = 'none';
-  const q = document.getElementById('searchInput').value.trim();
-  const a = document.createElement('a');
-  a.href = '/api/export-mapinfo?q=' + encodeURIComponent(q);
-  a.download = 'MapInfo_' + new Date().toISOString().slice(0,10) + '.zip';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-}
-
 function exportAssistant(fmt) {
   document.getElementById('exportMenu').style.display = 'none';
   const q = document.getElementById('searchInput').value.trim();
@@ -1416,73 +1406,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(xls_data)))
             self.end_headers()
             self.wfile.write(xls_data)
-
-        # ===== MapInfo 原生 TAB 导出 (.tab/.dat/.map/.id) =====
-        elif p == "/api/export-mapinfo":
-            params = parse_qs(url.query)
-            q = params.get("q", [""])[0]
-            with db_lock:
-                all_data, _ = search_records(q, 1, 999999)
-
-            ts = __import__("time").strftime("%Y%m%d_%H%M%S")
-            prefix = f"基站工参_{ts}"
-
-            # 转换工参记录为 MapInfo 字段
-            tab_records = []
-            for r in all_data:
-                try:
-                    lng = float(r.get("经度", 0))
-                    lat = float(r.get("纬度", 0))
-                    if not (60 <= lng <= 140 and 20 <= lat <= 55):
-                        continue
-                except (ValueError, TypeError):
-                    continue
-
-                name = str(r.get("基站名", "") or "")
-                bt = "室分" if any(k in name for k in ("室内", "室分")) else "宏站"
-
-                tab_records.append({
-                    "eNBname": name,
-                    "eNBid": str(r.get("基站ID", "") or ""),
-                    "Longitude": str(lng),
-                    "Latitude": str(lat),
-                    "Azimuth": str(r.get("方位角", "") or "0"),
-                    "基站类型": bt,
-                    "PCI": str(r.get("PCI", "") or ""),
-                    "EARFCN": str(r.get("下行频点", "") or ""),
-                    "CellName": str(r.get("小区名", "") or ""),
-                    "CellID": str(r.get("小区ID", "") or ""),
-                })
-
-            # 用 mapinfo_writer 生成原生 TAB
-            from mapinfo_writer import generate_mapinfo_tab
-            import tempfile, io, zipfile
-            tmp_dir = tempfile.mkdtemp()
-            tmp_prefix = os.path.join(tmp_dir, prefix)
-            try:
-                generate_mapinfo_tab(tab_records, tmp_prefix)
-                # 打包 zip
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for ext in [".tab", ".dat", ".map", ".id"]:
-                        fp = tmp_prefix + ext
-                        if os.path.exists(fp):
-                            zf.write(fp, prefix + ext)
-                zip_data = buf.getvalue()
-            finally:
-                for ext in [".tab", ".dat", ".map", ".id"]:
-                    try: os.remove(tmp_prefix + ext)
-                    except Exception: pass
-                try: os.rmdir(tmp_dir)
-                except Exception: pass
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition",
-                             f"attachment; filename=MapInfo_{ts}.zip")
-            self.send_header("Content-Length", str(len(zip_data)))
-            self.end_headers()
-            self.wfile.write(zip_data)
 
         # ===== Assistant 工参导出（xlsx 格式）=====
         elif p == "/api/export-assistant":
