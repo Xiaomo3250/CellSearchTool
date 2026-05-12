@@ -704,9 +704,9 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <button class="export-menu-item" onclick="exportCSV()">📄 表格 CSV（全字段）</button>
           <button class="export-menu-item" onclick="exportPioneer('4G')">📡 Pioneer 4G 基站</button>
           <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
-          <button class="export-menu-item" onclick="exportMapInfo()">🗺 MapInfo (MIF/MID)</button>
           <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
           <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
+          <button class="export-menu-item" onclick="exportMapInfo()">🗺 MapInfo (MIF/MID)</button>
         </div>
       </div>
     </div>
