@@ -706,7 +706,7 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
           <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
           <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
-          <button class="export-menu-item" onclick="exportMapInfo()">🗺 MapInfo (MIF/MID)</button>
+          <button class="export-menu-item" onclick="exportMapInfo()">🗺 MapInfo TAB</button>
         </div>
       </div>
     </div>
@@ -1417,78 +1417,64 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(xls_data)
 
-        # ===== MapInfo MIF/MID 导出 =====
+        # ===== MapInfo 原生 TAB 导出 (.tab/.dat/.map/.id) =====
         elif p == "/api/export-mapinfo":
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             with db_lock:
                 all_data, _ = search_records(q, 1, 999999)
 
-            # MIF 表头
             ts = __import__("time").strftime("%Y%m%d_%H%M%S")
-            mif_lines = [
-                "Version 300",
-                'Charset "WindowsSimpChinese"',
-                'Delimiter ","',
-                "Columns 10",
-                "  eNBname Char(100)",
-                "  eNBid Char(100)",
-                "  Longitude Float",
-                "  Latitude Float",
-                "  Azimuth Integer",
-                "  基站类型 Char(100)",
-                "  PCI Char(100)",
-                "  EARFCN Char(100)",
-                "  CellName Char(100)",
-                "  CellID Char(100)",
-                "Data",
-                "",
-            ]
-            mid_lines = []
+            prefix = f"基站工参_{ts}"
 
+            # 转换工参记录为 MapInfo 字段
+            tab_records = []
             for r in all_data:
-                lng = r.get("经度", "0")
-                lat = r.get("纬度", "0")
-                # 跳过无效坐标
                 try:
-                    if not (60 <= float(lng) <= 140 and 20 <= float(lat) <= 55):
+                    lng = float(r.get("经度", 0))
+                    lat = float(r.get("纬度", 0))
+                    if not (60 <= lng <= 140 and 20 <= lat <= 55):
                         continue
                 except (ValueError, TypeError):
                     continue
 
-                mif_lines.append(f"Point {lng} {lat}")
-                mif_lines.append("  Symbol (34,0,12)")
-
-                # 基站类型
-                bt = "宏站"
                 name = str(r.get("基站名", "") or "")
-                if any(k in name for k in ("室内", "室分")):
-                    bt = "室分"
+                bt = "室分" if any(k in name for k in ("室内", "室分")) else "宏站"
 
-                mid_fields = [
-                    str(r.get("基站名", "") or ""),
-                    str(r.get("基站ID", "") or ""),
-                    str(lng),
-                    str(lat),
-                    str(r.get("方位角", "") or "0"),
-                    bt,
-                    str(r.get("PCI", "") or ""),
-                    str(r.get("下行频点", "") or ""),
-                    str(r.get("小区名", "") or ""),
-                    str(r.get("小区ID", "") or ""),
-                ]
-                mid_lines.append(",".join('"' + v.replace('"', '""') + '"' for v in mid_fields))
+                tab_records.append({
+                    "eNBname": name,
+                    "eNBid": str(r.get("基站ID", "") or ""),
+                    "Longitude": str(lng),
+                    "Latitude": str(lat),
+                    "Azimuth": str(r.get("方位角", "") or "0"),
+                    "基站类型": bt,
+                    "PCI": str(r.get("PCI", "") or ""),
+                    "EARFCN": str(r.get("下行频点", "") or ""),
+                    "CellName": str(r.get("小区名", "") or ""),
+                    "CellID": str(r.get("小区ID", "") or ""),
+                })
 
-            mif_content = "\n".join(mif_lines)
-            mid_content = "\n".join(mid_lines)
-
-            # 打包 zip
-            import io, zipfile
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr(f"基站工参_{ts}.mif", mif_content.encode("gbk"))
-                zf.writestr(f"基站工参_{ts}.mid", mid_content.encode("gbk"))
-            zip_data = buf.getvalue()
+            # 用 mapinfo_writer 生成原生 TAB
+            from mapinfo_writer import generate_mapinfo_tab
+            import tempfile, io, zipfile
+            tmp_dir = tempfile.mkdtemp()
+            tmp_prefix = os.path.join(tmp_dir, prefix)
+            try:
+                generate_mapinfo_tab(tab_records, tmp_prefix)
+                # 打包 zip
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for ext in [".tab", ".dat", ".map", ".id"]:
+                        fp = tmp_prefix + ext
+                        if os.path.exists(fp):
+                            zf.write(fp, prefix + ext)
+                zip_data = buf.getvalue()
+            finally:
+                for ext in [".tab", ".dat", ".map", ".id"]:
+                    try: os.remove(tmp_prefix + ext)
+                    except Exception: pass
+                try: os.rmdir(tmp_dir)
+                except Exception: pass
 
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
