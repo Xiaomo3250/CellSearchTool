@@ -1235,6 +1235,24 @@ function showToast(msg, type) {
 document.getElementById('tableBody').addEventListener('click', function(e) {
   const td = e.target.closest('td');
   if (!td) return;
+  // 经纬度列：点击经度或纬度，统一复制"{经度},{纬度}"
+  const tr = td.closest('tr');
+  const tds = tr ? tr.querySelectorAll('td') : null;
+  if (tds && tds.length >= 14) {
+    // 经度=第13列(index 12), 纬度=第14列(index 13)
+    const lngTd = tds[12], latTd = tds[13];
+    if (td === lngTd || td === latTd) {
+      const lng = lngTd.innerText.trim();
+      const lat = latTd.innerText.trim();
+      if (lng && lat) {
+        const coord = lng + ',' + lat;
+        navigator.clipboard.writeText(coord).then(() => {
+          showToast('已复制: ' + coord, 'info');
+        }).catch(() => { showToast('复制失败', 'error'); });
+        return;
+      }
+    }
+  }
   const text = td.innerText.trim();
   if (!text) return;
   navigator.clipboard.writeText(text).then(() => {
