@@ -1,0 +1,20 @@
+Version 300
+Charset "WindowsSimpChinese"
+Delimiter ","
+Columns 10
+  eNBname Char(100)
+  eNBid Char(100)
+  Longitude Float
+  Latitude Float
+  Azimuth Integer
+  ª˘’æ¿‡–Õ Char(100)
+  PCI Char(100)
+  EARFCN Char(100)
+  CellName Char(100)
+  CellID Char(100)
+Data
+
+Point 88.068375 44.090481
+  Symbol (34,0,12)
+Point 87.500000 44.200000
+  Symbol (34,0,12)
