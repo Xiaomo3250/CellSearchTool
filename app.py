@@ -132,6 +132,19 @@ def safe_str(val):
     return "" if s in ("nan", "NaT", "None", "nat") else s
 
 
+def normalize_share(raw_val, carrier=""):
+    """将 Excel 的各种共享列值标准化为 '共享' / '非共享'"""
+    v = safe_str(raw_val)
+    # "是" / "共享" / "电信" / "Y" → 共享
+    if v in ("是", "共享", "Y", "Yes", "电信"):
+        return "共享"
+    # "否" / "未共享" / "N" / ""(仅电信) → 非共享
+    if v in ("否", "未共享", "N", "No") or (v == "" and carrier == "电信"):
+        return "非共享"
+    # 保留原值（如 "自建"、"共享站"）
+    return v if v else ""
+
+
 def detect_carrier(filename):
     if "电信" in filename: return "电信"
     if "联通" in filename: return "联通"
@@ -441,22 +454,12 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                         # 联通自建/联通共享站：命名检测结果直接使用
                         rec["共享"] = share_detected
                     else:
-                        # 电信站：共享由 Excel "是否共享" 列决定
-                        share_val = rec.get("共享", "")
-                        rec["共享"] = "共享" if share_val in ("是", "共享", "Y", "Yes") else "非共享"
+                        # 电信站：共享由 Excel 列决定
+                        rec["共享"] = normalize_share(rec.get("共享", ""), "电信")
                 else:
                     # 回退到文件名判定
                     rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
-                    # 共享字段：根据Excel "是否共享" 列标准化
-                    share_val = rec.get("共享", "")
-                    if share_val in ("是", "共享", "Y", "Yes"):
-                        rec["共享"] = "共享"
-                    elif share_val in ("否", "未共享", "N", "No"):
-                        rec["共享"] = "非共享"
-                    elif rule.get("carrier") == "电信" and share_val == "":
-                        rec["共享"] = "非共享"
-                    else:
-                        rec["共享"] = share_val  # 保留原值（如 "自建"、"共享站"）
+                    rec["共享"] = normalize_share(rec.get("共享", ""), rule.get("carrier", ""))
 
                 new_records.append(rec)
                 imported_count += 1
