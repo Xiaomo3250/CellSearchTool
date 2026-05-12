@@ -23,5 +23,9 @@ analyze*.py
 cache_sample.json
 
 # 开发/测试文件
+
+# PyInstaller 构建临时文件
+build_temp/
+*.spec
 test_import.py
 .learnings/
