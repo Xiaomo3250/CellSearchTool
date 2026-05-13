@@ -57,8 +57,8 @@ def get_cell(text):
 def extract_cells(text):
     """从单条方案文本中提取所有小区名"""
     cells = set()
-    for m in re.finditer(r'小区\s*([^\s，。；、（）时下方]+)', text):
-        name = m.group(1).strip().rstrip('，。；、（）的下时中方')
+    for m in re.finditer(r'小区\s*([^\s，。；、（）时下方共]+)', text):
+        name = m.group(1).strip().rstrip('，。；、（）的下时中方共')
         if len(name) > 3:
             cells.add(name)
     return cells
@@ -209,5 +209,26 @@ ws_new.delete_rows(2, ws_new.max_row)
 for item in new_items:
     ws_new.append([item['问题点道路'], item['经度'], item['纬度'], item['4G/5G'], item['备注']])
 
+# ====== 2d. 需要共享清单 ======
+share_items = []
+for prob in problems:
+    title = prob['title']
+    for sol in prob['solutions']:
+        if not any(k in sol for k in ('提申', '共享需求', '共享')): continue
+        cells = extract_cells(sol)
+        for cell in cells:
+            c, v = lookup(cell)
+            share_items.append({
+                '问题点': title, '小区名称': cell,
+                '厂家': v if v else lookup(cell)[1],
+            })
+
+ws_share = wb['需要共享清单']
+ws_share.delete_rows(2, ws_share.max_row)
+for item in share_items:
+    ws_share.append([item['问题点'], item['小区名称'], item['厂家']])
+    print(f"  共享: {item['小区名称'][:40]} | {item['厂家']}")
+
+print(f"共享清单: {len(share_items)} 条已写入")
 wb.save(TRACKER)
 print(f"新建清单: {len(new_items)} 条已写入\nDone")
