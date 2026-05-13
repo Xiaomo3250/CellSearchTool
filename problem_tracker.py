@@ -40,24 +40,43 @@ def get_cell(text):
     m = re.search(r'小区\s*([^(\s\u3002\uff0c\uff1b\uff09\uff08时]+)', text)
     return m.group(1) if m else ""
 
+# 从 cache.json 预加载工参数据（读取工参管理器的导入缓存）
+cell_db = {}
+try:
+    import json
+    cache_path = os.path.join(ROOT, 'cache.json')
+    with open(cache_path, 'r', encoding='utf-8') as f:
+        cache = json.load(f)
+    for rec in cache.get('records', []):
+        cn = str(rec.get('小区名', '')).strip()
+        if cn:
+            cell_db[cn] = {
+                '运营商': str(rec.get('运营商', '')).replace('中国', ''),
+                '设备商': str(rec.get('设备商', '')),
+            }
+except Exception:
+    pass
+
 def get_carrier(cell):
+    if cell in cell_db:
+        c = cell_db[cell]['运营商']
+        if c: return c
     if cell.startswith("CJ_"): return "电信"
     for p in ["CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN"]:
         if cell.startswith(p): return "联通"
     return ""
 
 def get_vendor(cell):
+    if cell in cell_db:
+        v = cell_db[cell]['设备商']
+        if v: return v
+    # 兜底
     for part in cell.split("_"):
         if len(part) >= 4:
             p2 = part[:2].upper()
             if p2 in ("GH","HB"): return "华为"
             if p2 in ("TS","DS"): return "大唐"
-            if p2 in ("ZH","ZB"): return "中兴"
             if p2 == "NR": return "诺基亚"
-    for part in cell.split("_"):
-        if len(part) >= 4 and part.isalnum():
-            p2 = part[:2].upper()
-            if p2 in ("HZ","JY","FY","GB","GZ"): return "华为"
     return "华为"
 
 def get_issue(title):
