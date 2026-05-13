@@ -51,14 +51,14 @@ if current: problems.append(current)
 
 # ====== 辅助函数 ======
 def get_cell(text):
-    m = re.search(r'小区\s*([^(\s\u3002\uff0c\uff1b\uff09\uff08\u65f6]+)', text)
+    m = re.search(r'小区\s*([^\s，。；、（）时下方]+)', text)
     return m.group(1) if m else ""
 
 def extract_cells(text):
     """从单条方案文本中提取所有小区名"""
     cells = set()
-    for m in re.finditer(r'小区\s*([^\s\uff0c\u3002\uff1b\u3001\uff09)(\u65f6]+)', text):
-        name = m.group(1).strip().rstrip('\uff0c\u3002\uff1b\u3001\uff09）)的下时中')
+    for m in re.finditer(r'小区\s*([^\s，。；、（）时下方]+)', text):
+        name = m.group(1).strip().rstrip('，。；、（）的下时中方')
         if len(name) > 3:
             cells.add(name)
     return cells
