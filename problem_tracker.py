@@ -75,17 +75,33 @@ def get_measure(solutions):
     if any(k in text for k in ("添加","邻区")): m.add("邻区添加")
     return "/".join(m) if m else "RF优化"
 
-# ====== 2a. 写入问题点 Sheet1 ======
+# ====== 2a. 写入问题点 Sheet1（运营商/厂家按措施类型分）======
 wb = load_workbook(TRACKER)
 ws = wb['问题点']
 ws.delete_rows(2, ws.max_row)
 
 for i, p in enumerate(problems):
     cell = get_cell(p['desc'] + p['analysis'])
+    measure = get_measure(p['solutions'])
+    actual_carrier = get_carrier(cell)
+    actual_vendor = get_vendor(cell)
+    # 运营商: 新建→联通, 其他→实际小区运营商, 混合→联通/电信
+    carriers = set()
+    vendors = set()
+    if '新建' in measure:
+        carriers.add('联通')
+        vendors.add('华为')
+    if any(k in measure for k in ('RF优化', '共享需求', '排查故障', '邻区添加')):
+        if actual_carrier: carriers.add(actual_carrier)
+        if actual_vendor: vendors.add(actual_vendor)
+    if not carriers: carriers.add(actual_carrier or '')
+    if not vendors: vendors.add(actual_vendor or '')
+    carrier_str = '/'.join(sorted(carriers))
+    vendor_str = '/'.join(sorted(vendors))
     ws.append([
         i + 1, "江布拉克", p['title'],
-        get_issue(p['title']), get_measure(p['solutions']),
-        get_carrier(cell), get_vendor(cell),
+        get_issue(p['title']), measure,
+        carrier_str, vendor_str,
         "优化", "未闭环", "", "", ""
     ])
 print(f"问题点: {len(problems)} 条已写入")
