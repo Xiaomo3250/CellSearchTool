@@ -7,6 +7,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import pandas as pd
 
+# 数据库模块
+import db
+# KML 导出模块
+import kml_export
+
 try:
     from openpyxl import load_workbook
     HAS_OPENPYXL = True
@@ -15,15 +20,9 @@ except ImportError:
 
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(WORKSPACE, "uploaded_files")
-CACHE_FILE = os.path.join(WORKSPACE, "cache.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-__version__ = "1.0.1"
-
-# ============ 全局数据库 ============
-db_lock = threading.Lock()
-records = []        # 每条记录含 _文件名 / _工作表 字段
-file_sources = {}   # key=filename, val={sheets:[...], count:int, carrier, tech}
+__version__ = "1.1.0"
 
 # 导入进度状态
 import_status = {
@@ -37,16 +36,16 @@ import_status = {
 MAPPING_RULES = [
     {
         "carrier": "电信", "tech": "5G",
-        "sheet_keywords": ["5G汇总工参", "5G工参", "汇总工参"],
-        "exclude_keywords": ["删除", "Sheet1"],
+        "sheet_keywords": ["5G汇总工参", "5G工参", "汇总工参", "NR", "5G"],
+        "exclude_keywords": ["删除"],
         "field_map": {
             "运营商": "中国电信", "技术制式": "5G NR",
             "设备商": ["厂家"],
-            "基站名": ["基站名称", "基站/楼盘名称", "站址"],
-            "基站ID": ["gNodeB标识"],
-            "小区名": ["NR小区名称"],
-            "小区ID": ["小区ID", "小区本地ID"],
-            "PCI": ["物理小区标识"],
+            "基站名": ["基站名称", "网元名称", "基站/楼盘名称", "站址"],
+            "基站ID": ["gNodeB标识", "gNodeB ID"],
+            "小区名": ["NR小区名称", "小区名称"],
+            "小区ID": ["小区ID", "小区本地ID", "NR小区标识", "小区标识"],
+            "PCI": ["物理小区标识", "PCI"],
             "下行频点": ["下行频点", "SSB绝对信道号"],
             "下倾角": ["下倾角", "机械下倾角", "电子下倾角"],
             "挂高": ["挂高", "天线挂高", "站高"],
@@ -55,6 +54,7 @@ MAPPING_RULES = [
             "纬度": ["纬度", "维度"],
             "频段": ["频带", "频段"],
             "共享": ["是否共享", "共享方"],
+            "TAC": ["跟踪区码", "跟踪区域码", "TAC"],
         },
     },
     {
@@ -77,6 +77,7 @@ MAPPING_RULES = [
             "纬度": ["纬度", "维度", "Latitude"],
             "频段": ["网络类型", "频段", "频带"],
             "共享": ["是否共享", "共享方"],
+            "TAC": ["TAC", "跟踪区码", "TAL"],
         },
     },
     {
@@ -99,20 +100,21 @@ MAPPING_RULES = [
             "纬度": ["维度", "纬度", "Latitude"],
             "频段": ["频段", "频带"],
             "共享": ["是否共享", "共享方"],
+            "TAC": ["跟踪区码", "TAC"],
         },
     },
     {
         "carrier": "联通", "tech": "5G",
         "sheet_keywords": None,
-        "exclude_keywords": ["删除", "Sheet1", "行政区划"],
+        "exclude_keywords": ["删除", "行政区划"],
         "field_map": {
             "运营商": "中国联通", "技术制式": "5G NR",
             "设备商": ["厂家"],
-            "基站名": ["基站名称"],
-            "基站ID": ["基站标识"],
+            "基站名": ["基站名称", "网元名称"],
+            "基站ID": ["基站标识", "gNodeB ID"],
             "小区名": ["小区名称"],
             "小区ID": ["NR小区标识", "小区标识"],
-            "PCI": ["PCI"],
+            "PCI": ["PCI", "物理小区标识"],
             "下行频点": ["SSB频点", "下行频点"],
             "下倾角": ["电子下倾角", "机械下倾角"],
             "挂高": ["挂高"],
@@ -121,6 +123,7 @@ MAPPING_RULES = [
             "纬度": ["纬度"],
             "频段": ["频带"],
             "共享": ["是否共享"],
+            "TAC": ["跟踪区码", "TAC"],
         },
     },
 ]
@@ -168,32 +171,29 @@ def get_matching_rule(filename):
 
 
 def resolve_rule_with_fallback(filepath, filename):
-    """获取匹配规则，文件名失败时用完整路径、首行数据、sheet名辅助检测"""
+    """获取匹配规则，文件名失败时用首行数据（最可靠）、完整路径、sheet名辅助检测"""
     rule = get_matching_rule(filename)
     if rule is not None:
         return rule
 
     tech_from_name = detect_tech(filename)
-
-    # 1) 文件名不包含运营商，但完整路径可能包含（如 ...\昌吉联通\...）
-    carrier_from_path = detect_carrier(filepath.replace("\\", "/"))
-    if carrier_from_path and tech_from_name:
-        for r in MAPPING_RULES:
-            if r["carrier"] == carrier_from_path and r["tech"] == tech_from_name:
-                return r
-
     sheet_names = _read_sheet_names(filepath)
 
-    # 1) 优先读首行数据用命名检测（最可靠）
+    # 1) 优先读首行数据用命名检测（最可靠，比路径/文件名准确）
     if sheet_names and sheet_names[0]:
         try:
             df_sample = pd.read_excel(filepath, sheet_name=sheet_names[0], nrows=5)
             if len(df_sample) > 0:
                 first_row = df_sample.iloc[0].to_dict()
-                carrier, _ = detect_carrier_from_names(
-                    safe_str(first_row.get("NR小区名称") or first_row.get("小区名称") or first_row.get("CellName") or ""),
-                    safe_str(first_row.get("基站名称") or first_row.get("基站名") or first_row.get("EnodebName") or "")
+                cell_name = safe_str(
+                    first_row.get("NR小区名称") or first_row.get("小区名称") or
+                    first_row.get("小区名") or first_row.get("CellName") or ""
                 )
+                station_name = safe_str(
+                    first_row.get("基站名称") or first_row.get("网元名称") or
+                    first_row.get("基站名") or first_row.get("EnodebName") or ""
+                )
+                carrier, _ = detect_carrier_from_names(cell_name, station_name)
                 if carrier:
                     c = "电信" if "电信" in carrier else "联通" if "联通" in carrier else None
                     t = tech_from_name or "4G"
@@ -203,7 +203,14 @@ def resolve_rule_with_fallback(filepath, filename):
         except Exception:
             pass
 
-    # 2) 回退：遍历所有规则按 sheet_keywords 匹配 sheet 名
+    # 2) 回退：完整路径检测（如 ...\昌吉联通\...）
+    carrier_from_path = detect_carrier(filepath.replace("\\", "/"))
+    if carrier_from_path and tech_from_name:
+        for r in MAPPING_RULES:
+            if r["carrier"] == carrier_from_path and r["tech"] == tech_from_name:
+                return r
+
+    # 3) 回退：遍历所有规则按 sheet_keywords 匹配 sheet 名
     for r in MAPPING_RULES:
         sk = r.get("sheet_keywords")
         if sk is None:
@@ -316,33 +323,37 @@ def resolve_field(row, field_candidates):
     return ""
 
 
-# ============ 缓存 ============
-def save_cache():
-    """将当前 records / file_sources 序列化到磁盘"""
-    try:
-        with db_lock:
-            data = {"records": records, "file_sources": file_sources}
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, default=str)
-        print(f"[缓存] 已保存 {len(records)} 条记录")
-    except Exception as e:
-        print(f"[缓存] 保存失败: {e}")
-
-
-def load_cache():
-    """启动时从磁盘加载缓存"""
-    global records, file_sources
-    if not os.path.exists(CACHE_FILE):
-        return
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        with db_lock:
-            records = data.get("records", [])
-            file_sources = data.get("file_sources", {})
-        print(f"[缓存] 已加载 {len(records)} 条记录，{len(file_sources)} 个文件")
-    except Exception as e:
-        print(f"[缓存] 加载失败: {e}")
+# ============ 数据库初始化（启动时调用）============
+def init_database():
+    """初始化 SQLite 数据库，兼容从旧 cache.json 迁移数据"""
+    db.init_db()
+    # 兼容旧版 cache.json 迁移
+    old_cache = os.path.join(WORKSPACE, "cache.json")
+    if os.path.exists(old_cache):
+        try:
+            with open(old_cache, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            old_records = data.get("records", [])
+            old_file_sources = data.get("file_sources", {})
+            if old_records:
+                # 补全 TAC 字段
+                for r in old_records:
+                    if "TAC" not in r:
+                        r["TAC"] = ""
+                    if "_raw" not in r:
+                        r["_raw"] = "{}"
+                db.insert_records(old_records)
+                print(f"[迁移] 从 cache.json 迁移了 {len(old_records)} 条记录")
+            for fname, info in old_file_sources.items():
+                db.upsert_file_source(
+                    fname, info.get("carrier", ""), info.get("tech", ""),
+                    info.get("count", 0), info.get("sheets", [])
+                )
+            # 迁移成功后重命名旧文件
+            os.rename(old_cache, old_cache + ".backup")
+            print("[迁移] cache.json 已备份为 cache.json.backup")
+        except Exception as e:
+            print(f"[迁移] 失败: {e}")
 
 
 # ============ 预览（只解析sheet列表，不导入）============
@@ -402,10 +413,9 @@ def preview_file(filepath):
         return {"filename": filename, "error": str(e), "sheets": []}
 
 
-# ============ 导入（指定sheet列表）============
+# ============ 导入（指定sheet列表，全量保留原始列）============
 def import_file_sheets(filepath, sheet_names, status_update=None):
-    """只导入 sheet_names 中指定的 sheet"""
-    global records, file_sources
+    """导入指定 sheet，全量保留原始列到 _raw，同时标准化 17 个核心字段"""
     filename = os.path.basename(filepath)
     rule = resolve_rule_with_fallback(filepath, filename)
     if rule is None:
@@ -423,25 +433,30 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
             new_records = []
             for _, row in df.iterrows():
                 row_dict = row.to_dict()
-                rec = {"_文件名": filename, "_工作表": sn}
+                # 将所有原始列转为字符串键值对存入 _raw
+                raw_dict = {}
+                for k, v in row_dict.items():
+                    raw_dict[str(k)] = str(v) if v is not None else ""
+
+                rec = {"_文件名": filename, "_工作表": sn, "_raw": raw_dict}
+                # 标准化字段映射
                 for out_field, candidates in rule["field_map"].items():
                     rec[out_field] = resolve_field(row_dict, candidates)
 
-                # 跳过重复表头行（某些Excel第0行有英文列名做副标题）
-                # 判断：小区名或基站名与字段候选名重合，则视为伪表头
+                # 跳过重复表头行
                 cell_name_val = rec.get("小区名", "")
                 lng_val = rec.get("经度", "")
                 all_candidates = [c for cands in rule["field_map"].values()
                                   if isinstance(cands, list) for c in cands]
                 if cell_name_val in all_candidates or lng_val in all_candidates:
                     continue
-                # 跳过经纬度明显无效的行（经度不在合理范围）
+                # 跳过经纬度明显无效的行
                 try:
                     lng_f = float(lng_val)
                     if not (60 <= lng_f <= 140):
                         continue
                 except (ValueError, TypeError):
-                    if lng_val:   # 经度有值但不是数字 → 伪表头
+                    if lng_val:
                         continue
 
                 # 基于小区名/基站名判定运营商归属
@@ -451,39 +466,35 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                 if carrier_detected:
                     rec["运营商"] = carrier_detected
                     if share_detected is not None:
-                        # 联通自建/联通共享站：命名检测结果直接使用
                         rec["共享"] = share_detected
                     else:
-                        # 电信站：共享由 Excel 列决定
                         rec["共享"] = normalize_share(rec.get("共享", ""), "电信")
                 else:
-                    # 回退到文件名判定
                     rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
                     rec["共享"] = normalize_share(rec.get("共享", ""), rule.get("carrier", ""))
 
                 new_records.append(rec)
                 imported_count += 1
 
-            with db_lock:
-                records.extend(new_records)
+            if new_records:
+                # 批量写入 SQLite
+                count = db.insert_records(new_records)
                 # 统计该文件多数运营商
                 carrier_counts = {}
                 for r in new_records:
                     c = r.get("运营商", "")
                     carrier_counts[c] = carrier_counts.get(c, 0) + 1
                 majority_carrier = max(carrier_counts, key=carrier_counts.get) if carrier_counts else rule["carrier"]
-                if filename not in file_sources:
-                    file_sources[filename] = {
-                        "carrier": majority_carrier, "tech": rule["tech"],
-                        "count": 0, "sheets": []
-                    }
-                else:
-                    file_sources[filename]["carrier"] = majority_carrier
-                file_sources[filename]["count"] += len(new_records)
-                if sn not in file_sources[filename]["sheets"]:
-                    file_sources[filename]["sheets"].append(sn)
+                # 更新文件来源
+                existing_fs = db.get_file_sources().get(filename, {})
+                existing_sheets = existing_fs.get("sheets", [])
+                if sn not in existing_sheets:
+                    existing_sheets.append(sn)
+                existing_count = existing_fs.get("count", 0) + count
+                db.upsert_file_source(filename, majority_carrier, rule["tech"], existing_count, existing_sheets)
+
                 if status_update:
-                    import_status["imported_records"] = len(records)
+                    import_status["imported_records"] = db.get_total_count()
             print(f"  [Sheet] {sn}: {len(new_records)} 条")
         except Exception as e:
             print(f"  [Error] sheet {sn}: {e}")
@@ -497,59 +508,31 @@ def remove_sheets(filename, sheet_names=None):
     sheet_names=None  → 删除该文件所有记录
     sheet_names=[...] → 只删除指定 sheet 的记录
     """
-    global records, file_sources
-    with db_lock:
-        if sheet_names is None:
-            records = [r for r in records if r.get("_文件名") != filename]
-            file_sources.pop(filename, None)
+    if sheet_names is None:
+        db.delete_by_filename(filename)
+        db.remove_file_source(filename)
+    else:
+        db.delete_by_filename_and_sheets(filename, sheet_names)
+        # 更新 file_sources
+        existing_fs = db.get_file_sources().get(filename, {})
+        existing_sheets = existing_fs.get("sheets", [])
+        for sn in sheet_names:
+            if sn in existing_sheets:
+                existing_sheets.remove(sn)
+        if existing_sheets:
+            db.upsert_file_source(
+                filename, existing_fs.get("carrier", ""), existing_fs.get("tech", ""),
+                existing_fs.get("count", 0) - len(sheet_names) if existing_fs.get("count", 0) > 0 else 0,
+                existing_sheets
+            )
         else:
-            sheet_set = set(sheet_names)
-            records = [r for r in records
-                       if not (r.get("_文件名") == filename and r.get("_工作表") in sheet_set)]
-            if filename in file_sources:
-                for sn in sheet_names:
-                    if sn in file_sources[filename]["sheets"]:
-                        file_sources[filename]["sheets"].remove(sn)
-                # 重新计算 count
-                file_sources[filename]["count"] = sum(
-                    1 for r in records if r.get("_文件名") == filename
-                )
-                if not file_sources[filename]["sheets"]:
-                    file_sources.pop(filename, None)
-    save_cache()
+            db.remove_file_source(filename)
 
 
 # ============ 搜索 ============
 def search_records(query, page=1, per_page=50):
-    q = str(query).strip()
-    if not q:
-        total = len(records)
-        start = (page - 1) * per_page
-        return records[start:start + per_page], total
-
-    results = []
-    q_lower = q.lower().replace("-", "")
-    q_parts = [p for p in q_lower.split() if p]
-
-    for rec in records:
-        cell_name   = rec.get("小区名", "").lower().replace("-", "")
-        pci         = rec.get("PCI", "").lower().replace("-", "")
-        cell_id     = rec.get("小区ID", "").lower().replace("-", "")
-        station_name= rec.get("基站名", "").lower().replace("-", "")
-
-        if (q_lower in cell_name or q_lower in pci or
-                q_lower in cell_id or q_lower in station_name):
-            results.append(rec)
-            continue
-        for part in q_parts:
-            if (part in cell_name or part in pci or
-                    part in cell_id or part in station_name):
-                results.append(rec)
-                break
-
-    total = len(results)
-    start = (page - 1) * per_page
-    return results[start:start + per_page], total
+    """搜索记录（委托给 db 模块）"""
+    return db.search_records(query, page, per_page)
 
 
 # ============ HTML 前端 ============
@@ -711,6 +694,8 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
           <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
           <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
+          <button class="export-menu-item" onclick="exportKML('4G')">🗺️ KML 基站扇区 (4G)</button>
+          <button class="export-menu-item" onclick="exportKML('5G')">🗺️ KML 基站扇区 (5G)</button>
         </div>
       </div>
     </div>
@@ -728,7 +713,7 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
           <tr>
             <th>制式</th><th>运营商</th><th>设备商</th><th>基站名</th><th>基站ID</th>
             <th>小区名</th><th>PCI</th><th>小区ID</th><th>下行频点</th><th>下倾角</th>
-            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>共享</th><th>来源</th>
+            <th>挂高</th><th>方位角</th><th>经度</th><th>纬度</th><th>共享</th><th>TAC</th><th>来源</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -1058,7 +1043,7 @@ function renderTable(data, q) {
   const tb = document.getElementById('tableBody');
   if (!data || !data.length) {
     const empty = q ? '未找到匹配的工参记录，请尝试其他关键词' : '暂无数据，请导入工参文件';
-    tb.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="icon">&#x1F50D;</div><h3>${empty}</h3><p style="margin-top:8px">支持按小区名、PCI、基站ID、基站名搜索</p></div></td></tr>`;
+    tb.innerHTML = `<tr><td colspan="16"><div class="empty-state"><div class="icon">&#x1F50D;</div><h3>${empty}</h3><p style="margin-top:8px">支持按小区名、PCI、基站ID、基站名搜索</p></div></td></tr>`;
     document.getElementById('tableTitle').innerHTML = '&#x1F4CB; 工参数据';
     return;
   }
@@ -1086,6 +1071,7 @@ function renderTable(data, q) {
       <td>${esc(r['\u7ecf\u5ea6']||'')}</td>
       <td>${esc(r['\u7eac\u5ea6']||'')}</td>
       <td>${(() => { const s = r['\u5171\u4eab']||''; if(!s) return ''; const cls = s.includes('\u975e\u5171\u4eab') ? 'share-no' : 'share-yes'; return `<span class="share-tag ${cls}">${esc(s)}</span>`; })()}</td>
+      <td style="font-family:monospace">${esc(r['TAC']||'')}</td>
       <td style="font-size:11px;color:var(--text-sec)">${esc(trunc(r['_\u6587\u4ef6\u540d']||'',25))}</td>
     </tr>`;
   }
@@ -1174,6 +1160,16 @@ function exportAssistant(fmt) {
   a.href = '/api/export-assistant?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
   a.download = 'Assistant_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function exportKML(fmt) {
+  document.getElementById('exportMenu').style.display = 'none';
+  const q = document.getElementById('searchInput').value.trim();
+  const a = document.createElement('a');
+  a.href = '/api/export-kml?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
+  a.download = (fmt === '5G' ? '5G' : '4G') + '工参_基站扇区_' + new Date().toISOString().slice(0,10) + '.kml';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('正在生成 KML 基站图层...', 'success');
 }
 
 // ======== 工具 ========
@@ -1275,35 +1271,27 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(HTML_PAGE)
 
         elif p == "/api/stats":
-            with db_lock:
-                sources = []
-                for fn, v in file_sources.items():
-                    sources.append({
-                        "filename": fn,
-                        "carrier": v.get("carrier", ""),
-                        "tech": v.get("tech", ""),
-                        "count": v.get("count", 0),
-                        "sheets": v.get("sheets", []),
-                    })
-                # 基站去重：按 (基站名, 运营商, 制式) 三元组合并，同名不同运营商算不同基站
-                station_set = set()
-                for r in records:
-                    name = r.get("基站名", "").strip()
-                    carrier = r.get("运营商", "")
-                    tech = r.get("技术制式", "")
-                    if name:
-                        station_set.add((name, carrier, tech))
-                self._send_json(200, {
-                    "total": len(records),
-                    "stations": len(station_set),
-                    "files": len(file_sources),
-                    "sources": sources
+            stats = db.get_stats()
+            file_sources = db.get_file_sources()
+            sources = []
+            for fn, v in file_sources.items():
+                sources.append({
+                    "filename": fn,
+                    "carrier": v.get("carrier", ""),
+                    "tech": v.get("tech", ""),
+                    "count": v.get("count", 0),
+                    "sheets": v.get("sheets", []),
                 })
+            self._send_json(200, {
+                "total": stats["total"],
+                "stations": stats["stations"],
+                "files": stats["files"],
+                "sources": sources
+            })
 
         elif p == "/api/import-status":
-            with db_lock:
-                st = dict(import_status)
-                st["imported_records"] = len(records)
+            st = dict(import_status)
+            st["imported_records"] = db.get_total_count()
             self._send_json(200, st)
 
         elif p == "/api/search":
@@ -1311,18 +1299,19 @@ class Handler(BaseHTTPRequestHandler):
             q = params.get("q", [""])[0]
             page = max(1, int(params.get("page", ["1"])[0]))
             per_page = max(1, int(params.get("per_page", ["50"])[0]))
-            with db_lock:
-                results, total = search_records(q, page, per_page)
+            results, total = search_records(q, page, per_page)
+            # 去除 _raw 大字段（前端不需要，避免 JSON 传输膨胀）
+            for r in results:
+                r.pop("_raw", None)
             pages = max(1, (total + per_page - 1) // per_page)
             self._send_json(200, {"results": results, "total": total, "page": page, "pages": pages})
 
         elif p == "/api/export":
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
-            with db_lock:
-                all_data, _ = search_records(q, 1, 999999)
+            all_data, _ = search_records(q, 1, 999999)
             cols = ["技术制式", "运营商", "设备商", "基站名", "基站ID", "小区名", "PCI", "小区ID",
-                    "下行频点", "下倾角", "挂高", "方位角", "经度", "纬度", "共享", "频段"]
+                    "下行频点", "下倾角", "挂高", "方位角", "经度", "纬度", "共享", "频段", "TAC"]
             lines = ["\uFEFF" + ",".join(cols)]
             for r in all_data:
                 lines.append(",".join('"' + str(r.get(c, "")).replace('"', '""') + '"' for c in cols))
@@ -1339,8 +1328,7 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             fmt = params.get("fmt", ["4G"])[0]  # 4G 或 5G
-            with db_lock:
-                all_data, _ = search_records(q, 1, 999999)
+            all_data, _ = search_records(q, 1, 999999)
 
             # 按制式过滤
             tech_keyword = "5G" if fmt == "5G" else "4G"
@@ -1417,8 +1405,7 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             fmt = params.get("fmt", ["LTE"])[0]  # LTE 或 NR
-            with db_lock:
-                all_data, _ = search_records(q, 1, 999999)
+            all_data, _ = search_records(q, 1, 999999)
 
             # 按制式过滤
             tech_keyword = "5G" if fmt == "NR" else "4G"
@@ -1476,6 +1463,35 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(xlsx_data)
 
+        # ===== KML 基站扇区图层导出 =====
+        elif p == "/api/export-kml":
+            params = parse_qs(url.query)
+            q = params.get("q", [""])[0]
+            fmt = params.get("fmt", ["4G"])[0]  # 4G 或 5G
+            all_data, _ = search_records(q, 1, 999999)
+
+            # 按制式过滤
+            tech_keyword = "5G" if fmt == "5G" else "4G"
+            filtered = [r for r in all_data if tech_keyword in (r.get("技术制式", "") or "")]
+
+            # 生成 KML
+            kml_content = kml_export.generate_kml(filtered, fmt)
+
+            import time
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            filename_ascii = f"{'5G' if fmt == '5G' else '4G'}_Sectors_{ts}.kml"
+            # RFC 5987 编码中文文件名
+            from urllib.parse import quote
+            filename_utf8 = f"{'5G' if fmt == '5G' else '4G'}工参_基站扇区_{ts}.kml"
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.google-earth.kml+xml; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f"attachment; filename=\"{filename_ascii}\"; filename*=UTF-8''{quote(filename_utf8)}")
+            self.send_header("Content-Length", str(len(kml_content.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(kml_content.encode("utf-8"))
+
         else:
             self.send_response(404); self.end_headers()
 
@@ -1490,12 +1506,11 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/remove-sheet":
             self._handle_remove_sheet()
         elif p == "/api/clear":
-            with db_lock:
-                global records, file_sources
-                records = []; file_sources = {}
-            # 删除缓存文件
+            db.clear_all()
+            # 删除旧缓存文件
+            old_cache = os.path.join(WORKSPACE, "cache.json")
             try:
-                if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
+                if os.path.exists(old_cache): os.remove(old_cache)
             except Exception: pass
             self._send_json(200, {"ok": True})
         else:
@@ -1545,7 +1560,7 @@ class Handler(BaseHTTPRequestHandler):
             "running": True, "total_files": len(files),
             "current_index": 0, "current_file": "",
             "current_sheet": "", "done": False, "error": "",
-            "imported_records": len(records),
+            "imported_records": db.get_total_count(),
         })
 
         def do_import():
@@ -1570,7 +1585,6 @@ class Handler(BaseHTTPRequestHandler):
                     import_status["error"] += f"{filename}: {e}; "
 
             import_status.update({"running": False, "done": True, "current_sheet": ""})
-            save_cache()
 
         threading.Thread(target=do_import, daemon=True).start()
         self._send_json(200, {"pending": True})
@@ -1639,17 +1653,18 @@ if __name__ == "__main__":
     test_sock.bind(("127.0.0.1", PORT))
     test_sock.close()
 
-    # 启动时加载缓存
-    load_cache()
+    # 启动时初始化数据库
+    init_database()
 
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
+    total = db.get_total_count()
     print(f"\n{'='*50}")
     print(f"  基站工参管理器已启动")
     print(f"  访问地址: http://127.0.0.1:{PORT}")
-    if records:
-        print(f"  已从缓存加载 {len(records)} 条记录")
+    if total:
+        print(f"  已加载 {total} 条记录")
     print(f"{'='*50}\n")
 
     threading.Timer(0.3, open_browser, args=(PORT,)).start()

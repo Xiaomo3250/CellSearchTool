@@ -1,7 +1,13 @@
 # 运行时/缓存
 cache.json
+cache.db
 __pycache__/
 *.pyc
+
+# PyInstaller
+dist/
+build/
+*.spec
 
 # 上传的工参文件（运行时产生，不入库）
 uploaded_files/
