@@ -88,7 +88,7 @@ MAPPING_RULES = [
             "运营商": "中国联通", "技术制式": "4G LTE",
             "设备商": ["设备厂家", "厂家"],
             "基站名": ["基站名称", "eNodeBName", "站址"],
-            "基站ID": ["基站ID", "eNodeBID"],
+            "基站ID": ["基站ID", "eNodeBID", "基站标识"],
             "小区名": ["小区名称", "CellName"],
             "小区ID": ["小区ID", "CELLID", "CellID", "本地小区标识"],
             "PCI": ["物理小区标识", "PCI"],
@@ -127,6 +127,19 @@ MAPPING_RULES = [
         },
     },
 ]
+
+
+# ============ 工具函数 ============
+FILTER_FIELDS = ["制式", "TAC", "基站ID", "小区ID", "PCI", "频点", "基站名", "小区名"]
+
+def _parse_filters(params):
+    """从查询参数中提取多字段过滤条件"""
+    filters = {}
+    for key in FILTER_FIELDS:
+        val = params.get(key, [""])[0].strip()
+        if val:
+            filters[key] = val
+    return filters if filters else None
 
 
 def safe_str(val):
@@ -255,7 +268,7 @@ def _read_sheet_names(filepath):
 
 
 # ============ 基于命名的运营商检测 ============
-UNICOM_PREFIXES = {"CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN"}
+UNICOM_PREFIXES = {"CJCJS","CJFKS","CJQTX","CJMLX","CJHTB","CJMNS","CJJMS","CJWJQ","CJFCH","CJWCW","CJXHN","WLMDQ","WLXSQ","WL_CJ"}
 COUNTY_CODE_RE = re.compile(r'^[A-Z]{2,4}\d?$')
 END_SEGMENT_RE = re.compile(r'^\d{1,2}$|^.+[EC]$|^.+[EC]-\d+$')
 
@@ -459,16 +472,29 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                     if lng_val:
                         continue
 
-                # 基于小区名/基站名判定运营商归属
-                carrier_detected, share_detected = detect_carrier_from_names(
-                    rec.get("小区名", ""), rec.get("基站名", "")
-                )
+                # 运营商判定：优先用"承建方"列，回退到命名检测
+                carrier_detected = None
+                share_detected = None
+                contractor = safe_str(row_dict.get("承建方", ""))
+                if "联通" in contractor:
+                    carrier_detected = "中国联通"
+                elif "电信" in contractor:
+                    carrier_detected = "中国电信"
+                elif "移动" in contractor:
+                    carrier_detected = "中国移动"
+
+                if carrier_detected is None:
+                    carrier_detected, share_detected = detect_carrier_from_names(
+                        rec.get("小区名", ""), rec.get("基站名", "")
+                    )
                 if carrier_detected:
                     rec["运营商"] = carrier_detected
                     if share_detected is not None:
                         rec["共享"] = share_detected
                     else:
-                        rec["共享"] = normalize_share(rec.get("共享", ""), "电信")
+                        # 通过承建方检测到的运营商，用实际运营商做 normalize
+                        carrier_key = "电信" if "电信" in carrier_detected else "联通" if "联通" in carrier_detected else ""
+                        rec["共享"] = normalize_share(rec.get("共享", ""), carrier_key)
                 else:
                     rec["运营商"] = rule.get("field_map", {}).get("运营商", "")
                     rec["共享"] = normalize_share(rec.get("共享", ""), rule.get("carrier", ""))
@@ -530,9 +556,9 @@ def remove_sheets(filename, sheet_names=None):
 
 
 # ============ 搜索 ============
-def search_records(query, page=1, per_page=50):
-    """搜索记录（委托给 db 模块）"""
-    return db.search_records(query, page, per_page)
+def search_records(query, page=1, per_page=50, filters=None):
+    """搜索记录（委托给 db 模块，支持多字段过滤）"""
+    return db.search_records(query, page, per_page, filters)
 
 
 # ============ HTML 前端 ============
@@ -558,6 +584,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .search-row{display:flex;gap:12px;align-items:center}
 .search-input{flex:1;padding:12px 16px;border:2px solid var(--border);border-radius:8px;font-size:15px;outline:none;transition:border-color .2s}
 .search-input:focus{border-color:var(--primary)}
+.search-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.search-grid label{font-size:12px;color:var(--text-sec);font-weight:600;display:block;margin-bottom:3px}
+.search-grid input,.search-grid select{width:100%;padding:10px 12px;border:2px solid var(--border);border-radius:8px;font-size:14px;outline:none;transition:border-color .2s;background:var(--card)}
+.search-grid input:focus,.search-grid select:focus{border-color:var(--primary)}
+.search-actions{display:flex;gap:10px;margin-top:14px;justify-content:flex-end}
+.search-mode-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.mode-label{font-size:14px;font-weight:700;color:var(--primary)}
 .btn{padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
 .btn-success{background:var(--success);color:#fff}.btn-success:hover{opacity:.9}
@@ -626,6 +659,21 @@ tr:hover td{background:#f8fafc}
 .toast-success{background:var(--success)}.toast-error{background:var(--danger)}.toast-info{background:var(--primary)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 .hidden-input{display:none}
+/* 外场模式卡片 */
+.card-list{display:flex;flex-direction:column;gap:12px;padding:0}
+.card-item{background:var(--card);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;transition:box-shadow .15s}
+.card-item:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.card-left{flex:1;min-width:0}
+.card-cell-name{font-size:15px;font-weight:700;color:var(--text);line-height:1.4;word-break:break-all}
+.card-row{font-size:13px;color:var(--text-sec);margin-top:4px;line-height:1.6}
+.card-row span{font-family:monospace;color:var(--text)}
+.card-tags{display:flex;gap:6px;margin-bottom:6px}
+.card-right{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.card-btn{padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer;font-size:11px;font-weight:600;color:var(--text-sec);transition:all .15s;white-space:nowrap}
+.card-btn:hover{border-color:var(--primary);color:var(--primary)}
+.card-btn:active{background:#eff6ff}
+.load-more{display:flex;justify-content:center;padding:20px}
+.load-more button{padding:10px 32px}
 /* 导出下拉菜单 */
 .export-dropdown{position:relative;display:inline-flex}
 .export-menu{position:absolute;top:100%;right:0;margin-top:4px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:100;min-width:200px;overflow:hidden}
@@ -658,7 +706,7 @@ tr:hover td{background:#f8fafc}
 .select-all-row{display:flex;gap:8px;margin-bottom:6px;font-size:12px}
 .select-all-row a{color:var(--primary);cursor:pointer;text-decoration:underline}
 footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
-@media(max-width:768px){.container{padding:12px}.search-row{flex-direction:column}.actions-row{flex-direction:column}}
+@media(max-width:768px){.container{padding:12px}.search-grid{grid-template-columns:1fr}.search-row{flex-direction:column}.actions-row{flex-direction:column}}
 </style>
 </head>
 <body>
@@ -682,21 +730,46 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
     </div>
     <div class="file-cards" id="fileCards"></div>
   </div>
+  <!-- 搜索区：双模式切换 -->
   <div class="search-box">
-    <div class="search-row">
-      <input class="search-input" id="searchInput" type="text" placeholder="输入小区名、PCI、基站ID 或基站名进行搜索..." autofocus>
-      <button class="btn btn-primary" onclick="doSearch()">&#x1F50D; 搜索</button>
-      <div class="export-dropdown" id="exportDropdown" style="display:none">
-        <button class="btn btn-outline btn-sm" onclick="toggleExportMenu()">&#x1F4E5; 导出结果 ▾</button>
-        <div class="export-menu" id="exportMenu" style="display:none">
-          <button class="export-menu-item" onclick="exportCSV()">📄 表格 CSV（全字段）</button>
-          <button class="export-menu-item" onclick="exportPioneer('4G')">📡 Pioneer 4G 基站</button>
-          <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
-          <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
-          <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
-          <button class="export-menu-item" onclick="exportKML('4G')">🗺️ KML 基站扇区 (4G)</button>
-          <button class="export-menu-item" onclick="exportKML('5G')">🗺️ KML 基站扇区 (5G)</button>
+    <div class="search-mode-bar">
+      <span class="mode-label" id="modeLabel">📝 报告模式</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="export-dropdown" id="exportDropdown" style="display:none">
+          <button class="btn btn-outline btn-xs" onclick="toggleExportMenu()">&#x1F4E5; 导出结果 ▾</button>
+          <div class="export-menu" id="exportMenu" style="display:none">
+            <button class="export-menu-item" onclick="exportCSV()">📄 表格 CSV（全字段）</button>
+            <button class="export-menu-item" onclick="exportPioneer('4G')">📡 Pioneer 4G 基站</button>
+            <button class="export-menu-item" onclick="exportPioneer('5G')">📡 Pioneer 5G 基站</button>
+            <button class="export-menu-item" onclick="exportAssistant('LTE')">📱 Assistant LTE</button>
+            <button class="export-menu-item" onclick="exportAssistant('NR')">📱 Assistant NR</button>
+            <button class="export-menu-item" onclick="exportKML('4G')">🗺️ KML 基站扇区 (4G)</button>
+            <button class="export-menu-item" onclick="exportKML('5G')">🗺️ KML 基站扇区 (5G)</button>
+          </div>
         </div>
+        <button class="btn btn-outline btn-xs" onclick="toggleSearchMode()" id="modeToggleBtn">🔀 切换外场模式</button>
+      </div>
+    </div>
+    <div class="search-panel" id="panel_report">
+      <div class="search-row">
+        <input class="search-input" id="searchInput" type="text" placeholder="输入小区名、PCI、基站ID 或基站名搜索..." autofocus>
+        <button class="btn btn-primary" onclick="doSearch()">🔍 搜索</button>
+      </div>
+    </div>
+    <div class="search-panel" id="panel_field" style="display:none">
+      <div class="search-grid">
+        <div><label>制式</label><select id="f_制式"><option value="">全部</option><option value="4G">4G LTE</option><option value="5G">5G NR</option></select></div>
+        <div><label>TAC</label><input id="f_TAC" type="text" placeholder="跟踪区码"></div>
+        <div><label>基站ID ⭐</label><input id="f_基站ID" type="text" placeholder="eNodeB / gNodeB ID"></div>
+        <div><label>CellID ⭐</label><input id="f_小区ID" type="text" placeholder="小区ID / NR小区标识"></div>
+        <div><label>PCI</label><input id="f_PCI" type="text" placeholder="物理小区标识"></div>
+        <div><label>频点</label><input id="f_频点" type="text" placeholder="EARFCN / SSB频点"></div>
+        <div><label>基站名</label><input id="f_基站名" type="text" placeholder="辅助搜索"></div>
+        <div><label>小区名</label><input id="f_小区名" type="text" placeholder="辅助搜索"></div>
+      </div>
+      <div class="search-actions">
+        <button class="btn btn-outline btn-sm" onclick="clearSearch()">✕ 清空</button>
+        <button class="btn btn-primary btn-sm" onclick="doSearch(1)">🔍 搜索</button>
       </div>
     </div>
   </div>
@@ -720,6 +793,19 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
       </table>
     </div>
     <div id="pagination" class="pagination"></div>
+  </div>
+  <!-- 外场模式卡片容器 -->
+  <div id="cardWrapper" style="display:none">
+    <div class="table-header">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <h3 id="cardTitle" style="white-space:nowrap">&#x1F4CB; 工参数据</h3>
+        <span id="cardResultCount" style="font-size:13px;font-weight:400;color:var(--text-sec);white-space:nowrap"></span>
+      </div>
+    </div>
+    <div id="cardList" class="card-list"></div>
+    <div id="cardLoadMore" class="load-more" style="display:none">
+      <button class="btn btn-outline btn-sm" onclick="loadMoreCards()">加载更多...</button>
+    </div>
   </div>
 </div>
 <footer>基站工参管理器 &copy; 2026 | 数据仅在本地处理，缓存保存在本地磁盘</footer>
@@ -752,39 +838,61 @@ footer{text-align:center;padding:20px;color:var(--text-sec);font-size:12px}
 
 <script>
 let currentPage = 1, lastTotalResults = 0, PER_PAGE = 50;
+let searchMode = 'report'; // 'report' 或 'field'
 // 预览数据: [{filename, carrier, tech, sheets:[{name,rows,recommended}]}]
 let previewData = [];
 
-const searchInput = document.getElementById('searchInput');
-
-searchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { currentPage = 1; doSearch(); }
-  // Escape：清空输入框并重新聚焦
-  if (e.key === 'Escape') {
-    searchInput.value = '';
-    searchInput.select();
-    e.preventDefault();
+// ======== 搜索模式切换 ========
+function toggleSearchMode() {
+  searchMode = (searchMode === 'report') ? 'field' : 'report';
+  const panelR = document.getElementById('panel_report');
+  const panelF = document.getElementById('panel_field');
+  const label = document.getElementById('modeLabel');
+  const btn = document.getElementById('modeToggleBtn');
+  const tableW = document.querySelector('.table-wrapper');
+  const cardW = document.getElementById('cardWrapper');
+  if (searchMode === 'field') {
+    panelR.style.display = 'none';
+    panelF.style.display = 'block';
+    label.innerHTML = '🔬 外场模式';
+    btn.textContent = '🔀 切换报告模式';
+    tableW.style.display = 'none';
+    cardW.style.display = 'block';
+    document.getElementById('f_基站ID').focus();
+    doSearch(1);  // 切换时重新搜索
+  } else {
+    panelR.style.display = 'block';
+    panelF.style.display = 'none';
+    label.innerHTML = '📝 报告模式';
+    btn.textContent = '🔀 切换外场模式';
+    tableW.style.display = 'block';
+    cardW.style.display = 'none';
+    document.getElementById('searchInput').focus();
   }
-});
+}
 
-// 全局快捷键
+// 全局键盘事件
 document.addEventListener('keydown', e => {
   const tag = document.activeElement.tagName;
   const inInput = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
-
-  // Ctrl+A：如果在输入框内，走浏览器默认全选；否则聚焦到搜索框
+  if (e.key === 'Enter' && inInput) { currentPage = 1; doSearch(); }
+  if (e.key === 'Escape' && inInput) {
+    clearSearch();
+    e.preventDefault();
+  }
+  // Ctrl+A：聚焦到当前模式的搜索框
   if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
     if (!inInput) {
       e.preventDefault();
-      searchInput.focus();
-      searchInput.select();
+      const el = searchMode === 'field' ? document.getElementById('f_基站ID') : document.getElementById('searchInput');
+      el.focus(); el.select();
     }
     return;
   }
-
-  // 任意可打印字符（不带 Ctrl/Meta/Alt）：跳转到搜索框接收输入
+  // 任意可打印字符：跳转到搜索框
   if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-    searchInput.focus();
+    const el = searchMode === 'field' ? document.getElementById('f_基站ID') : document.getElementById('searchInput');
+    el.focus();
   }
 });
 
@@ -1021,23 +1129,196 @@ async function removeSheet(filename, sheet) {
 }
 
 // ======== 搜索 & 渲染 ========
+const FILTER_KEYS = ["制式","TAC","基站ID","小区ID","PCI","频点","基站名","小区名"];
+
+function getFilters() {
+  const f = {};
+  for (const k of FILTER_KEYS) {
+    const el = document.getElementById('f_' + k);
+    if (el && el.value.trim()) f[k] = el.value.trim();
+  }
+  return f;
+}
+
+function clearFiltersUI() {
+  for (const k of FILTER_KEYS) {
+    const el = document.getElementById('f_' + k);
+    if (el) el.value = '';
+  }
+  document.getElementById('f_制式').value = '';
+}
+
+// 外场模式卡片数据缓存
+let fieldCardPage = 1;
+let fieldCardTotal = 0;
+let fieldCardResults = [];
+
+function clearSearch() {
+  if (searchMode === 'report') {
+    document.getElementById('searchInput').value = '';
+  } else {
+    clearFiltersUI();
+  }
+  doSearch(1);
+}
+
 async function doSearch(page) {
   currentPage = typeof page === 'number' ? page : 1;
-  const q = document.getElementById('searchInput').value.trim();
+  let url = `/api/search?page=${currentPage}&per_page=${PER_PAGE}`;
+  let qLabel = '';
+
+  if (searchMode === 'report') {
+    const q = document.getElementById('searchInput').value.trim();
+    if (q) {
+      url += '&q=' + encodeURIComponent(q);
+      qLabel = q;
+    }
+  } else {
+    const filters = getFilters();
+    for (const [k, v] of Object.entries(filters)) {
+      url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+    }
+    if (Object.keys(filters).length > 0) qLabel = '多字段筛选';
+  }
+
   try {
-    const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${currentPage}&per_page=${PER_PAGE}`);
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error(`服务器错误 (${resp.status})`);
     const d = await resp.json();
     lastTotalResults = d.total;
-    document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
     document.getElementById('exportDropdown').style.display = d.total > 0 ? 'inline-flex' : 'none';
-    renderTable(d.results, q);
-    renderPagination(d.total, d.page, d.pages);
+
+    if (searchMode === 'report') {
+      document.getElementById('searchResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
+      renderTable(d.results, qLabel);
+      renderPagination(d.total, d.page, d.pages);
+    } else {
+      // 外场模式：卡片瀑布流
+      document.getElementById('cardResultCount').textContent = d.total > 0 ? `共 ${d.total.toLocaleString()} 条` : '';
+      fieldCardPage = d.page;
+      fieldCardTotal = d.total;
+      fieldCardResults = d.results;
+      renderCards(fieldCardResults, fieldCardPage < d.pages);
+    }
   } catch(e) {
     console.error('搜索失败:', e);
     showToast('搜索失败: ' + e.message, 'error');
   }
 }
+
+function renderCards(data, hasMore) {
+  const list = document.getElementById('cardList');
+  if (!data || !data.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">&#x1F50D;</div><h3>未找到匹配记录</h3></div>';
+    document.getElementById('cardTitle').innerHTML = '&#x1F4CB; 工参数据';
+    document.getElementById('cardLoadMore').style.display = 'none';
+    return;
+  }
+  let html = '';
+  for (const r of data) {
+    const tech = r['\u6280\u672f\u5236\u5f0f'] || '';
+    const techLabel = tech.includes('5G') ? '5G' : '4G';
+    const tCls = tech.includes('5G') ? 'tech-5g' : 'tech-4g';
+    const cc = r['\u8fd0\u8425\u5546'] || '';
+    const shortCarrier = cc.replace('\u4e2d\u56fd', '');
+    const cCls = cc.includes('\u7535\u4fe1') ? 'carrier-dx' : cc.includes('\u8054\u901a') ? 'carrier-lt' : 'carrier-yd';
+    const cellName = esc(r['\u5c0f\u533a\u540d'] || '');
+    const pci = r['PCI'] || '';
+    const freq = r['\u4e0b\u884c\u9891\u70b9'] || '';
+    const bid = r['\u57fa\u7ad9ID'] || '';
+    const cid = r['\u5c0f\u533aID'] || '';
+    // 速查格式：制式_频点_基站ID_Cell ID
+    const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
+
+    html += `<div class="card-item">
+      <div class="card-left">
+        <div class="card-tags">
+          <span class="tech-tag ${tCls}">${techLabel}</span>
+          <span class="carrier-tag ${cCls}">${shortCarrier}</span>
+        </div>
+        <div class="card-cell-name">${cellName}</div>
+        <div class="card-row">PCI: <span>${pci}</span> &nbsp; 频点: <span>${freq}</span></div>
+        <div class="card-row">基站ID: <span>${bid}</span> &nbsp; CellID: <span>${cid}</span></div>
+      </div>
+      <div class="card-right">
+        <button class="card-btn" onclick="copyCellName(this)" data-text="${escAttr(cellName)}">📋 复制小区名</button>
+        <button class="card-btn" onclick="copyQuickRef(this)" data-text="${escAttr(quickRef)}">⚡ 复制ID</button>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html;
+  document.getElementById('cardTitle').innerHTML = '&#x1F4CB; 工参数据';
+  document.getElementById('cardLoadMore').style.display = hasMore ? 'flex' : 'none';
+}
+
+async function loadMoreCards() {
+  const nextPage = fieldCardPage + 1;
+  let url = `/api/search?page=${nextPage}&per_page=${PER_PAGE}`;
+  if (searchMode === 'report') return;
+  const filters = getFilters();
+  for (const [k, v] of Object.entries(filters)) {
+    url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+  }
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`服务器错误`);
+    const d = await resp.json();
+    fieldCardPage = d.page;
+    fieldCardTotal = d.total;
+    fieldCardResults = fieldCardResults.concat(d.results);
+    renderCardsAppend(d.results, fieldCardPage < d.pages);
+  } catch(e) {
+    showToast('加载失败: ' + e.message, 'error');
+  }
+}
+
+function renderCardsAppend(data, hasMore) {
+  const list = document.getElementById('cardList');
+  let html = '';
+  for (const r of data) {
+    const tech = r['\u6280\u672f\u5236\u5f0f'] || '';
+    const techLabel = tech.includes('5G') ? '5G' : '4G';
+    const tCls = tech.includes('5G') ? 'tech-5g' : 'tech-4g';
+    const cc = r['\u8fd0\u8425\u5546'] || '';
+    const shortCarrier = cc.replace('\u4e2d\u56fd', '');
+    const cCls = cc.includes('\u7535\u4fe1') ? 'carrier-dx' : cc.includes('\u8054\u901a') ? 'carrier-lt' : 'carrier-yd';
+    const cellName = esc(r['\u5c0f\u533a\u540d'] || '');
+    const pci = r['PCI'] || '';
+    const freq = r['\u4e0b\u884c\u9891\u70b9'] || '';
+    const bid = r['\u57fa\u7ad9ID'] || '';
+    const cid = r['\u5c0f\u533aID'] || '';
+    const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
+    html += `<div class="card-item">
+      <div class="card-left">
+        <div class="card-tags">
+          <span class="tech-tag ${tCls}">${techLabel}</span>
+          <span class="carrier-tag ${cCls}">${shortCarrier}</span>
+        </div>
+        <div class="card-cell-name">${cellName}</div>
+        <div class="card-row">PCI: <span>${pci}</span> &nbsp; 频点: <span>${freq}</span></div>
+        <div class="card-row">基站ID: <span>${bid}</span> &nbsp; CellID: <span>${cid}</span></div>
+      </div>
+      <div class="card-right">
+        <button class="card-btn" onclick="copyCellName(this)" data-text="${escAttr(cellName)}">📋 复制小区名</button>
+        <button class="card-btn" onclick="copyQuickRef(this)" data-text="${escAttr(quickRef)}">⚡ 复制ID</button>
+      </div>
+    </div>`;
+  }
+  list.insertAdjacentHTML('beforeend', html);
+  document.getElementById('cardLoadMore').style.display = hasMore ? 'flex' : 'none';
+}
+
+function copyCellName(btn) {
+  const text = btn.getAttribute('data-text');
+  navigator.clipboard.writeText(text).then(() => showToast('已复制小区名', 'info'))
+    .catch(() => showToast('复制失败', 'error'));
+}
+function copyQuickRef(btn) {
+  const text = btn.getAttribute('data-text');
+  navigator.clipboard.writeText(text).then(() => showToast('已复制ID: ' + text, 'info'))
+    .catch(() => showToast('复制失败', 'error'));
+}
+function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function renderTable(data, q) {
   const tb = document.getElementById('tableBody');
@@ -1116,7 +1397,7 @@ async function clearAll() {
     if (d.ok) {
       showToast('数据已清空', 'info');
       currentPage = 1;
-      document.getElementById('searchInput').value = '';
+      clearFiltersUI();
       await loadStats(); doSearch();
     }
   } catch(e) { showToast('清空失败: ' + e.message, 'error'); }
@@ -1135,38 +1416,47 @@ document.addEventListener('click', function(e) {
   }
 });
 
+function buildFilterQuery() {
+  if (searchMode === 'report') {
+    const q = document.getElementById('searchInput').value.trim();
+    return q ? 'q=' + encodeURIComponent(q) : '';
+  }
+  const f = getFilters();
+  let qs = '';
+  for (const [k, v] of Object.entries(f)) {
+    qs += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+  }
+  return qs;
+}
+
 function exportCSV() {
   document.getElementById('exportMenu').style.display = 'none';
-  const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
-  a.href = '/api/export?q=' + encodeURIComponent(q);
+  a.href = '/api/export?' + buildFilterQuery();
   a.download = '工参查询结果_' + new Date().toISOString().slice(0,10) + '.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function exportPioneer(fmt) {
   document.getElementById('exportMenu').style.display = 'none';
-  const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
-  a.href = '/api/export-pioneer?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
+  a.href = '/api/export-pioneer?fmt=' + fmt + '&' + buildFilterQuery();
   a.download = 'Pioneer_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.xls';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function exportAssistant(fmt) {
   document.getElementById('exportMenu').style.display = 'none';
-  const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
-  a.href = '/api/export-assistant?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
+  a.href = '/api/export-assistant?fmt=' + fmt + '&' + buildFilterQuery();
   a.download = 'Assistant_' + fmt + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function exportKML(fmt) {
   document.getElementById('exportMenu').style.display = 'none';
-  const q = document.getElementById('searchInput').value.trim();
   const a = document.createElement('a');
-  a.href = '/api/export-kml?q=' + encodeURIComponent(q) + '&fmt=' + fmt;
+  a.href = '/api/export-kml?fmt=' + fmt + '&' + buildFilterQuery();
   a.download = (fmt === '5G' ? '5G' : '4G') + '工参_基站扇区_' + new Date().toISOString().slice(0,10) + '.kml';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   showToast('正在生成 KML 基站图层...', 'success');
@@ -1299,7 +1589,8 @@ class Handler(BaseHTTPRequestHandler):
             q = params.get("q", [""])[0]
             page = max(1, int(params.get("page", ["1"])[0]))
             per_page = max(1, int(params.get("per_page", ["50"])[0]))
-            results, total = search_records(q, page, per_page)
+            filters = _parse_filters(params)
+            results, total = search_records(q, page, per_page, filters)
             # 去除 _raw 大字段（前端不需要，避免 JSON 传输膨胀）
             for r in results:
                 r.pop("_raw", None)
@@ -1309,7 +1600,8 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/export":
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
-            all_data, _ = search_records(q, 1, 999999)
+            filters = _parse_filters(params)
+            all_data, _ = search_records(q, 1, 999999, filters)
             cols = ["技术制式", "运营商", "设备商", "基站名", "基站ID", "小区名", "PCI", "小区ID",
                     "下行频点", "下倾角", "挂高", "方位角", "经度", "纬度", "共享", "频段", "TAC"]
             lines = ["\uFEFF" + ",".join(cols)]
@@ -1328,7 +1620,8 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             fmt = params.get("fmt", ["4G"])[0]  # 4G 或 5G
-            all_data, _ = search_records(q, 1, 999999)
+            filters = _parse_filters(params)
+            all_data, _ = search_records(q, 1, 999999, filters)
 
             # 按制式过滤
             tech_keyword = "5G" if fmt == "5G" else "4G"
@@ -1405,7 +1698,8 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             fmt = params.get("fmt", ["LTE"])[0]  # LTE 或 NR
-            all_data, _ = search_records(q, 1, 999999)
+            filters = _parse_filters(params)
+            all_data, _ = search_records(q, 1, 999999, filters)
 
             # 按制式过滤
             tech_keyword = "5G" if fmt == "NR" else "4G"
@@ -1468,7 +1762,8 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             q = params.get("q", [""])[0]
             fmt = params.get("fmt", ["4G"])[0]  # 4G 或 5G
-            all_data, _ = search_records(q, 1, 999999)
+            filters = _parse_filters(params)
+            all_data, _ = search_records(q, 1, 999999, filters)
 
             # 按制式过滤
             tech_keyword = "5G" if fmt == "5G" else "4G"
@@ -1628,6 +1923,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send_html(self, content):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(content.encode("utf-8"))
 

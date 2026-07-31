@@ -54,7 +54,7 @@ def init_db():
                 pass
 
             # 索引
-            for col in ["小区名", "基站名", "PCI", "小区ID", "_文件名", "技术制式", "运营商", "_search"]:
+            for col in ["小区名", "基站名", "PCI", "小区ID", "基站ID", "TAC", "下行频点", "_文件名", "技术制式", "运营商", "_search"]:
                 try:
                     conn.execute(f'CREATE INDEX IF NOT EXISTS idx_{col} ON records("{col}")')
                 except Exception:
@@ -184,38 +184,92 @@ def get_unique_station_count():
         conn.close()
 
 
-def search_records(query: str, page: int = 1, per_page: int = 50):
-    """搜索记录，返回 (records_list, total_count)"""
-    q = str(query).strip()
+# 多字段搜索的字段映射：前端参数名 → 数据库列名
+FILTER_FIELD_MAP = {
+    "制式": "技术制式",
+    "TAC": "TAC",
+    "基站ID": "基站ID",
+    "小区ID": "小区ID",
+    "PCI": "PCI",
+    "频点": "下行频点",
+    "基站名": "基站名",
+    "小区名": "小区名",
+}
+
+# 数字型字段（优先精确匹配 =，走索引）
+NUMERIC_FIELDS = {"基站ID", "小区ID", "PCI", "TAC", "频点"}
+
+
+def search_records(query: str = "", page: int = 1, per_page: int = 50, filters: dict = None):
+    """搜索记录，返回 (records_list, total_count)
+    
+    支持两种模式：
+    1. 传统模式：query 非空时在 _search 列中模糊匹配
+    2. 多字段模式：filters 指定各字段值，AND 组合，智能匹配（数字=精确，文本=模糊）
+    """
+    q = str(query).strip() if query else ""
     conn = get_conn()
     try:
-        if not q:
+        conditions = []
+        params = []
+
+        # 多字段过滤（AND 组合）
+        if filters:
+            for param_name, db_col in FILTER_FIELD_MAP.items():
+                val = str(filters.get(param_name, "")).strip()
+                if not val:
+                    continue
+                # 制式特殊处理
+                if param_name == "制式":
+                    if val.upper() in ("4G", "LTE"):
+                        conditions.append(f'"{db_col}" LIKE ?')
+                        params.append("%4G%")
+                    elif val.upper() in ("5G", "NR"):
+                        conditions.append(f'"{db_col}" LIKE ?')
+                        params.append("%5G%")
+                    else:
+                        conditions.append(f'"{db_col}" LIKE ?')
+                        params.append(f"%{val}%")
+                # 数字型字段：纯数字 → 精确匹配 =（走索引）；含非数字字符 → LIKE 回退
+                elif param_name in NUMERIC_FIELDS:
+                    if val.isdigit():
+                        conditions.append(f'"{db_col}" = ?')
+                        params.append(val)
+                    else:
+                        conditions.append(f'"{db_col}" LIKE ?')
+                        params.append(f"%{val}%")
+                # 文本型字段：模糊 LIKE
+                else:
+                    conditions.append(f'"{db_col}" LIKE ?')
+                    params.append(f"%{val}%")
+
+        # 传统模糊搜索
+        if q:
+            q_lower = q.lower().replace("-", "")
+            q_parts = [p for p in q_lower.split() if p]
+            or_conds = []
+            or_params = []
+            or_conds.append('"_search" LIKE ?')
+            or_params.append(f"%{q_lower}%")
+            for part in q_parts:
+                or_conds.append('"_search" LIKE ?')
+                or_params.append(f"%{part}%")
+            conditions.append("(" + " OR ".join(or_conds) + ")")
+            params.extend(or_params)
+
+        # 无任何条件 → 返回全部
+        cols = ", ".join([f'"{c}"' for c in STANDARD_COLS] + ['"_文件名"', '"_工作表"', 'id'])
+        if not conditions:
             total = conn.execute("SELECT COUNT(*) as cnt FROM records").fetchone()["cnt"]
             offset = (page - 1) * per_page
             rows = conn.execute(
-                "SELECT * FROM records ORDER BY id LIMIT ? OFFSET ?",
+                f"SELECT {cols} FROM records ORDER BY id LIMIT ? OFFSET ?",
                 (per_page, offset)
             ).fetchall()
             return [dict(r) for r in rows], total
 
-        # 搜索：使用预处理的 _search 列（已小写去连字符），直接 LIKE 走索引
-        q_lower = q.lower().replace("-", "")
-        q_parts = [p for p in q_lower.split() if p]
-
-        conditions = []
-        params = []
-
-        # 整词匹配
-        conditions.append('"_search" LIKE ?')
-        params.append(f"%{q_lower}%")
-
-        # 分词匹配（提高召回率）
-        for part in q_parts:
-            conditions.append('"_search" LIKE ?')
-            params.append(f"%{part}%")
-
-        where = " OR ".join(conditions)
-        sql = f'SELECT * FROM records WHERE {where}'
+        where = " AND ".join(conditions)
+        sql = f"SELECT {cols} FROM records WHERE {where}"
         total = conn.execute(f"SELECT COUNT(*) as cnt FROM records WHERE {where}", params).fetchone()["cnt"]
 
         offset = (page - 1) * per_page
