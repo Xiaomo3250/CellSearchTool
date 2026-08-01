@@ -15,7 +15,7 @@ class Importer {
     '基站名':   ['基站名称', '网元名称', 'EnodebName', 'eNodeBName', '基站/楼盘名称', '站址'],
     '基站ID':   ['gNodeB标识', 'gNodeB ID', 'EnodebID', 'eNodeBID', '基站ID', '基站标识'],
     '小区名':   ['NR小区名称', '小区名称', 'CellName'],
-    '小区ID':   ['小区ID', '小区本地ID', 'CELLID', '本地CellID', 'NR小区标识', '小区标识'],
+    '小区ID':   ['小区ID', '小区本地ID', 'CELLID', '本地CellID', 'NR小区标识', '小区标识', 'CellID', '本地小区标识'],
     'PCI':      ['物理小区标识', 'PCI'],
     '下行频点': ['下行频点', 'SSB绝对信道号', '下行中心频点号', 'EARFCN', '频点', 'SSB频点'],
     '下倾角':   ['总下倾角', 'Downtilt', '下倾角', '机械下倾角', '电子下倾角'],
