@@ -1,6 +1,7 @@
 # 运行时/缓存
 cache.json
 cache.db
+cache.db-*
 __pycache__/
 *.pyc
 
