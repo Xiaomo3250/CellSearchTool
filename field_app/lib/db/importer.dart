@@ -274,6 +274,15 @@ class Importer {
             value = cell.findAllElements('t').map((e) => e.innerText).join();
           } else {
             value = cell.findAllElements('v').firstOrNull?.innerText ?? '';
+            // 规范化数值：去 ".0" 后缀（PCI=14.0→14），展开科学计数法（1.3529691E7→13529691）
+            final numVal = double.tryParse(value);
+            if (numVal != null) {
+              if (numVal == numVal.truncateToDouble()) {
+                value = numVal.truncate().toString();
+              } else {
+                value = numVal.toString();
+              }
+            }
           }
           rowData[colLetter] = value;
         }
