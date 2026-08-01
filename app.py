@@ -456,6 +456,12 @@ def import_file_sheets(filepath, sheet_names, status_update=None):
                 for out_field, candidates in rule["field_map"].items():
                     rec[out_field] = resolve_field(row_dict, candidates)
 
+                # 小区ID 规范化：联通4G 长格式(基站ID+小区标识)→截短标识
+                sid = safe_str(rec.get("基站ID", ""))
+                cid = safe_str(rec.get("小区ID", ""))
+                if sid and cid.startswith(sid):
+                    rec["小区ID"] = cid[len(sid):]
+
                 # 跳过重复表头行
                 cell_name_val = rec.get("小区名", "")
                 lng_val = rec.get("经度", "")

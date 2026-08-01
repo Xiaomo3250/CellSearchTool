@@ -21,7 +21,8 @@ class AppDatabase {
   Future<Database> _initDb() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'field_cache.db');
-    return openDatabase(path, version: 1, onCreate: (db, version) async {
+    return openDatabase(path, version: 2,
+      onCreate: (db, version) async {
       // 17 个标准化字段 + 3 个元数据字段
       await db.execute('''
         CREATE TABLE records (
@@ -39,6 +40,16 @@ class AppDatabase {
         'TAC', '下行频点', '技术制式', '_search'
       ]) {
         await db.execute('CREATE INDEX IF NOT EXISTS idx_$col ON records("$col")');
+      }
+    },
+    onUpgrade: (db, oldVersion, newVersion) async {
+      if (oldVersion < 2) {
+        // v1→v2: 规范化小区ID，长格式(基站ID+小区标识)→截短标识
+        await db.rawUpdate('''
+          UPDATE records SET "小区ID" = substr("小区ID", length("基站ID")+1)
+          WHERE length("基站ID") > 0 AND "小区ID" LIKE "基站ID" || '%'
+            AND length("小区ID") > length("基站ID")
+        ''');
       }
     });
   }

@@ -60,6 +60,17 @@ def init_db():
                 except Exception:
                     pass
 
+            # 小区ID 规范化迁移：长格式(基站ID+小区标识)→截短标识
+            try:
+                conn.execute('''
+                    UPDATE records SET "小区ID" = substr("小区ID", length("基站ID")+1)
+                    WHERE length("基站ID") > 0 AND "小区ID" LIKE "基站ID" || '%'
+                      AND length("小区ID") > length("基站ID")
+                ''')
+                conn.commit()
+            except Exception:
+                pass
+
             # 文件来源表
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS file_sources (
