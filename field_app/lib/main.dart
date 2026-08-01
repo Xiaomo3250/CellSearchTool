@@ -254,11 +254,10 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
   Future<void> _importWithUI(String filename, List<int> bytes) async {
     // 1. 读 sheet 名 & 多选
     final sheetNames = Importer.listSheetNames(bytes);
-    if (sheetNames.isEmpty) return;
     Set<int>? indices;
-    if (mounted) {
+    if (sheetNames.length > 1 && mounted) {
       indices = await _showSheetPicker(sheetNames);
-      if (indices == null || indices.isEmpty) return;
+      if (indices == null) return;
     }
 
     // 2. 加载弹窗

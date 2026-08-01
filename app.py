@@ -990,9 +990,8 @@ function openPreview() {
 
     const sheetItems = f.sheets.map((s, si) => `
       <label class="sheet-check-item">
-        <input type="checkbox" id="chk_${fi}_${si}" data-fi="${fi}" data-si="${si}"
-          ${s.recommended ? 'checked' : ''}>
-        <span class="sc-name">${esc(s.name)}${s.recommended ? '<span class="sc-recommended">推荐</span>' : ''}</span>
+        <input type="checkbox" id="chk_${fi}_${si}" data-fi="${fi}" data-si="${si}">
+        <span class="sc-name">${esc(s.name)}</span>
         <span class="sc-rows">${s.rows > 0 ? s.rows.toLocaleString() + ' 行' : ''}</span>
       </label>`).join('');
 
@@ -1005,7 +1004,6 @@ function openPreview() {
         <div class="select-all-row">
           <a onclick="selectAll(${fi},true)">全选</a>
           <a onclick="selectAll(${fi},false)">全不选</a>
-          <a onclick="selectAll(${fi},'recommended')">仅推荐</a>
         </div>
         ${sheetItems}
       </div>
@@ -1017,11 +1015,7 @@ function openPreview() {
 
 function selectAll(fi, mode) {
   const checks = document.querySelectorAll(`input[data-fi="${fi}"]`);
-  checks.forEach(cb => {
-    const si = parseInt(cb.getAttribute('data-si'));
-    if (mode === 'recommended') cb.checked = previewData[fi].sheets[si].recommended;
-    else cb.checked = !!mode;
-  });
+  checks.forEach(cb => { cb.checked = !!mode; });
 }
 
 function closePreview() {
