@@ -1226,7 +1226,9 @@ function renderCards(data, hasMore) {
     const pci = r['PCI'] || '';
     const freq = r['\u4e0b\u884c\u9891\u70b9'] || '';
     const bid = r['\u57fa\u7ad9ID'] || '';
-    const cid = r['\u5c0f\u533aID'] || '';
+    let cid = r['\u5c0f\u533aID'] || '';
+    // 规范化：联通4G 的长格式(基站ID+小区标识)→截取短标识
+    if (bid && cid.startsWith(bid)) cid = cid.substring(bid.length);
     // 速查格式：制式_频点_基站ID_Cell ID
     const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
 
@@ -1286,7 +1288,9 @@ function renderCardsAppend(data, hasMore) {
     const pci = r['PCI'] || '';
     const freq = r['\u4e0b\u884c\u9891\u70b9'] || '';
     const bid = r['\u57fa\u7ad9ID'] || '';
-    const cid = r['\u5c0f\u533aID'] || '';
+    let cid = r['\u5c0f\u533aID'] || '';
+    // 规范化：联通4G 的长格式(基站ID+小区标识)→截取短标识
+    if (bid && cid.startsWith(bid)) cid = cid.substring(bid.length);
     const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
     html += `<div class="card-item">
       <div class="card-left">

@@ -134,6 +134,14 @@ class Importer {
           vals[e.key] = _pick(dict, e.value);
         }
 
+        // 小区ID 规范化：联通4G 长格式(基站ID+小区标识) → 截取短标识
+        final rawSiteId = vals['基站ID'] ?? '';
+        final rawCellId = vals['小区ID'] ?? '';
+        final shortCellId = (rawSiteId.isNotEmpty && rawCellId.startsWith(rawSiteId))
+            ? rawCellId.substring(rawSiteId.length)
+            : rawCellId;
+        vals['小区ID'] = shortCellId;
+
         // 经纬度校验
         final lngStr = vals['经度'] ?? '';
         double? lng;
