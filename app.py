@@ -1229,6 +1229,9 @@ function renderCards(data, hasMore) {
     let cid = r['\u5c0f\u533aID'] || '';
     // 规范化：联通4G 的长格式(基站ID+小区标识)→截取短标识
     if (bid && cid.startsWith(bid)) cid = cid.substring(bid.length);
+    const vendor = r['\u8bbe\u5907\u5546'] || r['\u5382\u5bb6'] || '';
+    const lng = r['\u7ecf\u5ea6'] || '';
+    const lat = r['\u7eac\u5ea6'] || '';
     // 速查格式：制式_频点_基站ID_Cell ID
     const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
 
@@ -1237,6 +1240,7 @@ function renderCards(data, hasMore) {
         <div class="card-tags">
           <span class="tech-tag ${tCls}">${techLabel}</span>
           <span class="carrier-tag ${cCls}">${shortCarrier}</span>
+          ${vendor ? `<span class="vendor-tag">${esc(vendor)}</span>` : ''}
         </div>
         <div class="card-cell-name">${cellName}</div>
         <div class="card-row">PCI: <span>${pci}</span> &nbsp; 频点: <span>${freq}</span></div>
@@ -1245,6 +1249,7 @@ function renderCards(data, hasMore) {
       <div class="card-right">
         <button class="card-btn" onclick="copyCellName(this)" data-text="${escAttr(cellName)}">📋 复制小区名</button>
         <button class="card-btn" onclick="copyQuickRef(this)" data-text="${escAttr(quickRef)}">⚡ 复制ID</button>
+        <button class="card-btn" onclick="copyCoord(this)" data-text="${escAttr(lng + ',' + lat)}">📍 经纬度</button>
       </div>
     </div>`;
   }
@@ -1291,12 +1296,16 @@ function renderCardsAppend(data, hasMore) {
     let cid = r['\u5c0f\u533aID'] || '';
     // 规范化：联通4G 的长格式(基站ID+小区标识)→截取短标识
     if (bid && cid.startsWith(bid)) cid = cid.substring(bid.length);
+    const vendor = r['\u8bbe\u5907\u5546'] || r['\u5382\u5bb6'] || '';
+    const lng = r['\u7ecf\u5ea6'] || '';
+    const lat = r['\u7eac\u5ea6'] || '';
     const quickRef = techLabel + '_' + freq + '_' + bid + '_' + cid;
     html += `<div class="card-item">
       <div class="card-left">
         <div class="card-tags">
           <span class="tech-tag ${tCls}">${techLabel}</span>
           <span class="carrier-tag ${cCls}">${shortCarrier}</span>
+          ${vendor ? `<span class=\"vendor-tag\">${esc(vendor)}</span>` : ''}
         </div>
         <div class="card-cell-name">${cellName}</div>
         <div class="card-row">PCI: <span>${pci}</span> &nbsp; 频点: <span>${freq}</span></div>
@@ -1305,6 +1314,7 @@ function renderCardsAppend(data, hasMore) {
       <div class="card-right">
         <button class="card-btn" onclick="copyCellName(this)" data-text="${escAttr(cellName)}">📋 复制小区名</button>
         <button class="card-btn" onclick="copyQuickRef(this)" data-text="${escAttr(quickRef)}">⚡ 复制ID</button>
+        <button class="card-btn" onclick="copyCoord(this)" data-text="${escAttr(lng + ',' + lat)}">📍 经纬度</button>
       </div>
     </div>`;
   }
@@ -1320,6 +1330,11 @@ function copyCellName(btn) {
 function copyQuickRef(btn) {
   const text = btn.getAttribute('data-text');
   navigator.clipboard.writeText(text).then(() => showToast('已复制ID: ' + text, 'info'))
+    .catch(() => showToast('复制失败', 'error'));
+}
+function copyCoord(btn) {
+  const text = btn.getAttribute('data-text');
+  navigator.clipboard.writeText(text).then(() => showToast('已复制经纬度: ' + text, 'info'))
     .catch(() => showToast('复制失败', 'error'));
 }
 function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
