@@ -22,7 +22,7 @@ class FieldApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeNotifier,
       builder: (_, mode, __) => MaterialApp(
-        title: '外场工参速查',
+        title: '基站工参管理器',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true, brightness: Brightness.light),
         darkTheme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true, brightness: Brightness.dark),
@@ -325,7 +325,7 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('外场工参速查'),
+        title: const Text('基站工参管理器'),
         actions: [
           // 顶栏统计
           Center(child: Text('$_totalRecords条 | $_fileCount个文件',
