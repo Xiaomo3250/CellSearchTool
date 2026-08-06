@@ -532,6 +532,14 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                 style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
               ),
+              const SizedBox(height: 4),
+              OutlinedButton.icon(
+                onPressed: () => _copy('${s.lng},${s.lat}', '经纬度'),
+                icon: const Icon(Icons.location_on, size: 14),
+                label: const Text('经纬度', style: TextStyle(fontSize: 11)),
+                style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+              ),
             ]),
           ],
         ),
