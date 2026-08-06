@@ -121,40 +121,9 @@ class Importer {
         }
         if (!hasVal) { skipEmpty++; continue; }
 
-        // 运营商检测（多级回退）
+        // 运营商检测（多级回退，与桌面端逻辑一致）
         final ctor = dict['承建方'] ?? '';
-        var carrier = '';
-        if (ctor.contains('联通')) {
-          carrier = '中国联通';
-        } else if (ctor.contains('电信')) {
-          carrier = '中国电信';
-        } else if (ctor.contains('移动')) {
-          carrier = '中国移动';
-        } else {
-          // 回退：文件名检测
-          final fn = filename;
-          if (fn.contains('联通')) {
-            carrier = '中国联通';
-          } else if (fn.contains('电信')) {
-            carrier = '中国电信';
-          } else if (fn.contains('移动')) {
-            carrier = '中国移动';
-          } else {
-            // 再回退：小区名/基站名检测
-            final cn = dict['小区名'] ?? dict['小区名称'] ?? '';
-            final sn = dict['基站名'] ?? dict['基站名称'] ?? '';
-            final combined = '$cn$sn';
-            if (combined.contains('联通')) {
-              carrier = '中国联通';
-            } else if (combined.contains('电信')) {
-              carrier = '中国电信';
-            } else if (combined.contains('移动')) {
-              carrier = '中国移动';
-            } else {
-              carrier = '中国联通'; // 最终兜底
-            }
-          }
-        }
+        var carrier = _detectCarrier(ctor, filename, dict);
 
         // 字段映射
         final vals = <String, String>{};
@@ -409,5 +378,43 @@ class Importer {
     return sb.toString();
   }
 
-  String _detectTech(String f) => f.toUpperCase().contains('5G') ? '5G NR' : '4G LTE';
+  /// 运营商智能检测（与桌面端逻辑一致）
+  static String _detectCarrier(String contractor, String filename, Map<String, String> dict) {
+    // 1. 承建方列（最可靠）
+    if (contractor.contains('联通')) return '中国联通';
+    if (contractor.contains('电信')) return '中国电信';
+    if (contractor.contains('移动')) return '中国移动';
+
+    // 2. 文件名
+    if (filename.contains('联通')) return '中国联通';
+    if (filename.contains('电信')) return '中国电信';
+    if (filename.contains('移动')) return '中国移动';
+
+    // 3. 小区名/基站名关键字
+    final cn = dict['小区名'] ?? dict['小区名称'] ?? '';
+    final sn = dict['基站名'] ?? dict['基站名称'] ?? '';
+    final combined = '$cn$sn';
+    if (combined.contains('联通')) return '中国联通';
+    if (combined.contains('电信')) return '中国电信';
+    if (combined.contains('移动')) return '中国移动';
+
+    // 4. 小区名前缀判定（CJ_ → 电信，桌面端相同逻辑）
+    if (cn.startsWith('CJ_') || sn.startsWith('CJ_')) return '中国电信';
+    // 联通区县前缀
+    const unicomPrefixes = ['CJCJS','CJFKS','CJQTX','CJMLX','CJHTB','CJMNS',
+      'CJJMS','CJWJQ','CJFCH','CJWCW','CJXHN','WLMDQ','WLXSQ','WL_CJ'];
+    for (final p in unicomPrefixes) {
+      if (cn.startsWith(p) || sn.startsWith(p)) return '中国联通';
+    }
+
+    // 5. (LTGX) 标记 → 电信
+    if (cn.contains('(LTGX)') || sn.contains('(LTGX)')) return '中国电信';
+
+    // 6. 最终兜底：按制式推测（5G 更可能是电信/联通，4G 更可能是联通）
+    final tech = _detectTech(filename);
+    if (tech.contains('5G')) return '中国电信'; // 5G 默认电信
+    return '中国联通'; // 4G 默认联通
+  }
+
+  static String _detectTech(String f) => f.toUpperCase().contains('5G') ? '5G NR' : '4G LTE';
 }
