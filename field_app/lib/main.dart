@@ -404,6 +404,15 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
               decoration: const InputDecoration(labelText: '频点', isDense: true))),
         ]),
         const SizedBox(height: 8),
+        // 第4行：基站名 + 小区名（文本模糊搜索）
+        Row(children: [
+          Expanded(child: TextField(controller: _bsNameCtrl,
+              decoration: const InputDecoration(labelText: '基站名', isDense: true))),
+          const SizedBox(width: 8),
+          Expanded(child: TextField(controller: _cellNameCtrl,
+              decoration: const InputDecoration(labelText: '小区名', isDense: true))),
+        ]),
+        const SizedBox(height: 8),
         // 操作按钮
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
           TextButton(onPressed: () {
@@ -458,7 +467,7 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 制式 + 运营商标签
+                  // 制式 + 运营商 + 设备商
                   Row(children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -469,7 +478,7 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                         style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold,
                           color: is4G ? Colors.orange.shade800 : Colors.blue.shade800)),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
@@ -479,6 +488,17 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                         style: TextStyle(fontSize: 11,
                           color: isDX ? Colors.teal.shade700 : Colors.purple.shade700)),
                     ),
+                    if (s.vendor.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(4)),
+                        child: Text(s.vendor,
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                      ),
+                    ],
                   ]),
                   const SizedBox(height: 6),
                   // 小区名（加粗，完整显示）

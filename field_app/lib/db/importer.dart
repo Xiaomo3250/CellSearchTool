@@ -121,18 +121,48 @@ class Importer {
         }
         if (!hasVal) { skipEmpty++; continue; }
 
-        // 运营商
+        // 运营商检测（多级回退）
         final ctor = dict['承建方'] ?? '';
-        final carrier = ctor.contains('联通') ? '中国联通'
-            : ctor.contains('电信') ? '中国电信'
-            : ctor.contains('移动') ? '中国移动'
-            : '中国联通';
+        var carrier = '';
+        if (ctor.contains('联通')) {
+          carrier = '中国联通';
+        } else if (ctor.contains('电信')) {
+          carrier = '中国电信';
+        } else if (ctor.contains('移动')) {
+          carrier = '中国移动';
+        } else {
+          // 回退：文件名检测
+          final fn = filename;
+          if (fn.contains('联通')) {
+            carrier = '中国联通';
+          } else if (fn.contains('电信')) {
+            carrier = '中国电信';
+          } else if (fn.contains('移动')) {
+            carrier = '中国移动';
+          } else {
+            // 再回退：小区名/基站名检测
+            final cn = dict['小区名'] ?? dict['小区名称'] ?? '';
+            final sn = dict['基站名'] ?? dict['基站名称'] ?? '';
+            final combined = '$cn$sn';
+            if (combined.contains('联通')) {
+              carrier = '中国联通';
+            } else if (combined.contains('电信')) {
+              carrier = '中国电信';
+            } else if (combined.contains('移动')) {
+              carrier = '中国移动';
+            } else {
+              carrier = '中国联通'; // 最终兜底
+            }
+          }
+        }
 
         // 字段映射
         final vals = <String, String>{};
         for (final e in _fieldMap.entries) {
           vals[e.key] = _pick(dict, e.value);
         }
+        // 设备商单独映射（不在 17 个标准字段中，但卡片需要显示）
+        vals['设备商'] = _pick(dict, ['厂家', '设备厂家', '设备商']);
 
         // 小区ID 规范化：联通4G 长格式(基站ID+小区标识) → 截取短标识
         final rawSiteId = vals['基站ID'] ?? '';
